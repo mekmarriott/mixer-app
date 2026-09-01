@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DJ Mixer</title>
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">DJMIXER<span class="brand-sub">prototype</span></div>
+  <h1 id="mix-title" class="mix-title" contenteditable="true" spellcheck="false" aria-label="Mix title">Untitled Mix</h1>
+  <div class="transport">
+    <button id="btn-play" class="btn-play" aria-label="Play or pause" disabled>&#9654;</button>
+    <div class="time-readout"><span id="time-now">0:00</span><span class="time-sep">/</span><span id="time-total">0:00</span></div>
+  </div>
+</header>
+
+<main>
+  <section class="track-window-wrap" aria-label="Track window">
+    <canvas id="timeline" class="track-window"></canvas>
+    <div id="drop-hint" class="drop-hint">Load a track from the deck below, then drag a suggestion onto the timeline</div>
+  </section>
+
+  <section class="navbar-wrap" aria-label="Timeline navigation">
+    <canvas id="navbar" class="navbar"></canvas>
+  </section>
+
+  <section class="deck-wrap">
+    <div class="deck-head">
+      <h2 id="deck-title">Song deck</h2>
+      <span id="deck-sub" class="deck-sub">All tracks &mdash; pick your opener</span>
+    </div>
+    <ol id="deck" class="deck" aria-labelledby="deck-title"></ol>
+  </section>
+</main>
+
+<footer class="attribution-bar">
+  <div id="attributions" class="attributions" aria-label="Track attributions"></div>
+  <button id="btn-credits" class="link-btn">Open-source credits</button>
+</footer>
+
+<dialog id="credits-dialog" class="credits-dialog">
+  <h2>Open-source credits</h2>
+  <ul id="credits-list"></ul>
+  <form method="dialog"><button class="link-btn">Close</button></form>
+</dialog>
+
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+<script type="module" src="/js/app.js"></script>
+</body>
+</html>
