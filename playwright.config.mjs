@@ -89,6 +89,12 @@ export default defineConfig({
     env: {
       DJMIXER_DATA: path.join(ROOT, "data-e2e"),
       DJMIXER_TRACKS: path.join(ROOT, "tests", "e2e", "tracks.e2e.json"),
+      // Empty, not absent. .env.local points the app at the shared local
+      // PostgreSQL, and this suite needs its own throwaway catalog under
+      // data-e2e/ rather than whatever a dev server left behind. An empty
+      // value is falsy in config.database_url(), so the server falls back to
+      // SQLite; unsetting it instead would let .env.local win.
+      DJMIXER_DATABASE_URL: "",
       PYTHONUNBUFFERED: "1",
     },
     timeout: 300_000,

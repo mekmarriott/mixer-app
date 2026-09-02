@@ -1,7 +1,14 @@
-# Secrets and local environment
+# Secrets.
+#
+# .env.local is COMMITTED and must stay that way: it holds the shared local
+# endpoints (see its header), and nothing secret goes in it. The `.env.*`
+# pattern matches it, so the negation below is load-bearing — remove it and
+# the file silently vanishes from git while still working on the machine that
+# wrote it, which is the worst failure mode available to shared config.
 .env
 .env.*
 !.env.example
+!.env.local
 
 # Python
 .venv/

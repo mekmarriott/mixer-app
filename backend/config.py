@@ -7,7 +7,18 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 
 # ---------------------------------------------------------------- credentials
+# Two files, loaded in precedence order:
+#
+#   .env         gitignored. Credentials and personal overrides.
+#   .env.local   COMMITTED. Shared local endpoints — the local Postgres URL,
+#                the blob backend — so a checkout runs in the same shape as
+#                production instead of silently falling back to SQLite and
+#                filesystem paths.
+#
+# `load_env_file` uses setdefault, so first writer wins: real environment
+# variables beat .env, which beats .env.local.
 ENV_FILE = Path(os.environ.get("DJMIXER_ENV_FILE", ROOT / ".env"))
+LOCAL_ENV_FILE = Path(os.environ.get("DJMIXER_LOCAL_ENV_FILE", ROOT / ".env.local"))
 
 # `export KEY=value`, `KEY=value`, optional quotes; blank lines and # ignored.
 _ENV_LINE = re.compile(
@@ -39,7 +50,8 @@ def load_env_file(path=ENV_FILE):
     return loaded
 
 
-load_env_file()
+load_env_file(ENV_FILE)             # secrets first: they win over the defaults
+load_env_file(LOCAL_ENV_FILE)       # committed local endpoints
 
 # Jamendo credentials. JAMENDO_CLIENT_ID is the documented name;
 # JAMENDO_API_CLIENT is what Jamendo's own dashboard calls it, and is accepted
@@ -110,14 +122,19 @@ HOP_SIZE = 512
 # ends simply share no grid point and are never recommended to each other —
 # handled by `bpm_grid.shared_grid`, not a special case.
 #
-# GRID SPACING trades storage against stretch amount, and nothing else. Two
-# tracks are mix-compatible when they share a grid point, and coarsening the
-# spacing does not remove any pair that a 1 BPM grid would have matched: the
-# reachable span is set by MAX_STRETCH_RATIO, not by the spacing, so every
-# track still reaches every point close enough to it. What changes is the
-# worst-case joint stretch, by about one percentage point (3.33% -> 4.17%
-# across the house band; unchanged for downtempo, where the band width binds
-# rather than the spacing).
+# GRID SPACING trades storage against compatibility, and the cost is small but
+# NOT zero. Two tracks are mix-compatible when they share a grid point. Inside
+# a band narrower than roughly a 1.2 max/min ratio, coarsening costs nothing:
+# the reachable span is set by MAX_STRETCH_RATIO rather than by the spacing, so
+# every track still reaches every point near it. In a wider band, two tracks
+# near opposite edges can only meet on an interior point, and a coarse grid may
+# not put one where both can reach.
+#
+# Measured against a 1 BPM grid, at spacing 5: `slow` loses 2.96% of pairs and
+# `midtempo` 2.62%; downtempo, house, uptempo and fast lose none. Worst-case
+# joint stretch rises about a point (3.33% -> 4.17% across house).
+# tests/backend/test_p5_deploy.py asserts those bounds, so raising the spacing
+# further has to be a deliberate trade rather than a silent regression.
 #
 # What it buys is roughly 4x fewer rendered variants per track — about 75% of
 # all stored audio bytes, and the same fraction of ingestion compute.

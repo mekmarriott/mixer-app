@@ -98,6 +98,47 @@ class TestAudioRedirect(unittest.TestCase):
         self.assertIn(r.status_code, (301, 308, 400, 404))
 
 
+class TestVercelBlobStoreConfig(unittest.TestCase):
+    """The remote backend's pure configuration logic.
+
+    No network and no CLI: these cover the branches that decide whether a
+    deploy can serve audio at all, which is where an untested failure is most
+    expensive — the app would start cleanly and 500 on every audio request.
+    """
+
+    def test_access_defaults_to_public(self):
+        """Public is not a preference. The 302 design needs the object to be
+        anonymously readable."""
+        self.assertEqual(storage.VercelBlobStore(access=None,
+                                                 base_url="https://x").access,
+                         "public")
+
+    def test_invalid_access_is_rejected_at_construction(self):
+        with self.assertRaises(storage.BlobStoreError):
+            storage.VercelBlobStore(access="publik", base_url="https://x")
+
+    def test_private_store_refuses_to_emit_a_client_url(self):
+        """A private blob is not anonymously readable, so redirecting a browser
+        to it 404s. Failing loudly beats handing out a broken URL."""
+        store = storage.VercelBlobStore(access="private", base_url="https://x")
+        with self.assertRaises(storage.BlobStoreError) as ctx:
+            store.url_for("audio/1001.wav")
+        self.assertIn("private", str(ctx.exception))
+
+    def test_url_for_uses_the_configured_base(self):
+        store = storage.VercelBlobStore(base_url="https://cdn.example.com/")
+        self.assertEqual(store.url_for("audio/1001.wav"),
+                         "https://cdn.example.com/audio/1001.wav")
+
+    def test_missing_base_url_raises_rather_than_guessing(self):
+        """api/index.py sets BLOB_BACKEND=vercel, so an unset BLOB_BASE_URL is
+        a live deploy failure. It must say so, not emit a relative path."""
+        store = storage.VercelBlobStore(base_url="")
+        with self.assertRaises(storage.BlobStoreError) as ctx:
+            store.url_for("audio/1001.wav")
+        self.assertIn("BLOB_BASE_URL", str(ctx.exception))
+
+
 class TestTokenBucket(unittest.TestCase):
     """Rate limiting is the only thing between a 10k-track run and a flood,
     so it is tested on a fake clock rather than by sleeping."""

@@ -45,9 +45,16 @@ EOF
 fi
 echo "Using $PY ($("$PY" -c 'import sys; print(sys.version.split()[0])'))"
 
+# The default suite runs on SQLite explicitly, even though .env.local points
+# the app at PostgreSQL. Not because it fails there, but because these modules
+# assume a private database each: every one points config.DB_PATH at its own
+# temp file, while Database.from_config() under a URL hands them all the same
+# server, and test_p6_resumable's 8-second track 1001 then overwrites the
+# shared fixture's 60-second one. `make test-pg` covers the dialect-relevant
+# modules against a real PostgreSQL.
 echo
-echo "== Backend suite (unittest) =="
-(cd tests/backend && "$PY" -m unittest discover -s . -v)
+echo "== Backend suite (unittest, SQLite) =="
+(cd tests/backend && DJMIXER_DATABASE_URL= "$PY" -m unittest discover -s . -v)
 
 echo
 echo "== Frontend logic suite (node:test) =="

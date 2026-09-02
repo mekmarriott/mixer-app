@@ -69,7 +69,7 @@ PGLOG    := $(PGDATA)/server.log
 
 PORT     ?= 5050
 
-.PHONY: help test test-fast test-pg test-browser check serve ingest ingest-dry \
+.PHONY: help test test-fast test-pg test-browser check serve ingest ingest-dry env \
         db-up db-down db-reset db-shell db-url wait-pg up down status \
         clean-pg clean-variants clean-audio clean-all deps
 
@@ -87,6 +87,7 @@ help:
 	@echo "  make status          what is running, and what is on disk"
 	@echo "  make serve           run the app on :$(PORT)"
 	@echo "  make db-shell        psql into the local database"
+	@echo "  make env             show the resolved configuration"
 	@echo "  make db-reset        drop + recreate the suite's database (safe)"
 	@echo
 	@echo "Catalog"
@@ -212,6 +213,18 @@ db-shell: db-up
 
 db-url:
 	@echo "$(PG_URL)"
+
+# What the app will actually use, after .env > .env.local > defaults resolve.
+# Worth a target because the failure it prevents is silent: an unset
+# DJMIXER_DATABASE_URL falls back to SQLite and everything still works, right
+# up until the dialect differences surface in production.
+env:
+	@"$(PY)" -c "from backend import config, storage; \
+	  print('database   :', config.database_url()); \
+	  print('blob store :', type(storage.get_store()).__name__); \
+	  print('data dir   :', config.DATA_DIR); \
+	  print('catalog    :', config.TRACKS_CONFIG); \
+	  print('jamendo id :', 'set' if config.jamendo_client_id() else 'NOT SET (offline mode only)')"
 
 status:
 	@echo "python:      $(PY)"

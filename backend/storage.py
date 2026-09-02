@@ -163,9 +163,28 @@ class VercelBlobStore(BlobStore):
 
     URL_RE = re.compile(r"https://\S+\.blob\.vercel-storage\.com/\S+")
 
-    def __init__(self, token=None, base_url=None, cli="vercel"):
+    #: A store is created public OR private and will not accept writes at the
+    #: other access level — a private store rejects `--access public` outright.
+    #:
+    #: This is not merely a flag. The whole serving design is a 302 from the API
+    #: straight to the object, which requires the object to be anonymously
+    #: readable. Against a PRIVATE store that redirect 404s in the browser, and
+    #: private delivery is proxied through a Function rather than served from
+    #: the CDN — roughly double-billed, and it puts the audio back on the path
+    #: the redirect exists to keep it off.
+    #:
+    #: So `public` is the supported configuration. `private` is accepted here
+    #: only so uploads succeed against a private store; serving from one needs
+    #: signed URLs, which url_for() does not implement.
+    DEFAULT_ACCESS = "public"
+
+    def __init__(self, token=None, base_url=None, cli="vercel", access=None):
         self.token = token or os.environ.get("BLOB_READ_WRITE_TOKEN")
         self.base_url = (base_url or os.environ.get("BLOB_BASE_URL") or "").rstrip("/")
+        self.access = access or os.environ.get("BLOB_ACCESS") or self.DEFAULT_ACCESS
+        if self.access not in ("public", "private"):
+            raise BlobStoreError(
+                f"BLOB_ACCESS must be 'public' or 'private', got {self.access!r}")
         self.cli = cli
         self._urls = {}
 
@@ -186,7 +205,7 @@ class VercelBlobStore(BlobStore):
         args = [
             "put", str(src_path),
             "--pathname", key,
-            "--access", "public",
+            "--access", self.access,
             "--content-type", content_type or _content_type(key),
             "--allow-overwrite",
             # Immutable content addressed by a stable key: cache hard. Without
@@ -214,6 +233,13 @@ class VercelBlobStore(BlobStore):
             os.unlink(tmp)
 
     def url_for(self, key):
+        if self.access != "public":
+            raise BlobStoreError(
+                "cannot hand a client a URL for a private blob: the audio "
+                "endpoint 302s to it, and a private object is not anonymously "
+                "readable, so the browser gets a 404. Serving from a private "
+                "store needs signed URLs, which are not implemented. Set the "
+                "store to public access, or add signing here.")
         if key in self._urls:
             return self._urls[key]
         if self.base_url:
@@ -224,7 +250,7 @@ class VercelBlobStore(BlobStore):
 
     def exists(self, key):
         try:
-            self._run(["get", key, "--access", "public", "--output", os.devnull])
+            self._run(["get", key, "--access", self.access, "--output", os.devnull])
             return True
         except BlobStoreError:
             return False
