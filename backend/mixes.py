@@ -67,10 +67,19 @@ def walk(rows, head_id):
     return ordered
 
 
-def to_transport(ordered, durations):
+def to_transport(ordered, duration_of):
     """Flatten an ordered chain into what the client draws.
 
-    `durations` maps track_id -> seconds at that track's grid BPM.
+    `duration_of(track_id, grid_bpm)` returns how long that track actually
+    plays for AT THAT GRID BPM. It must be the variant's duration, not the
+    track's native one: a track stretched from 124 to 120 BPM plays for
+    measurably longer, and the two disagreed by up to 5s on the test catalog.
+
+    That mattered because the client clamps a drop using the variant duration
+    it loaded, while this function fed check_overlaps native durations — so the
+    server believed a predecessor ended up to 3.8s later than the client did,
+    rejected the client's legal-looking placement, and the save failed with a
+    409 that surfaced as an unrelated timeout.
     """
     out, start = [], 0.0
     for row in ordered:
@@ -83,7 +92,7 @@ def to_transport(ordered, durations):
             "delta_s": delta_s,
             "offset_s": start,
             "grid_bpm": row.grid_bpm,
-            "duration_s": durations.get(row.track_id, 0.0),
+            "duration_s": duration_of(row.track_id, row.grid_bpm),
         })
     return out
 
@@ -160,13 +169,13 @@ class MixRepository:
                  "updated_at": m.updated_at, "created_at": m.created_at}
                 for m in mixes]
 
-    def get(self, mix_id, durations):
+    def get(self, mix_id, duration_of):
         with self.database.reading() as q:
             m = q.get_mix(id=mix_id)
             if not m:
                 return None
             rows = q.list_mix_tracks(mix_id=mix_id)
-        entries = to_transport(walk(rows, m.head_id), durations)
+        entries = to_transport(walk(rows, m.head_id), duration_of)
         return {"id": m.id, "name": m.name, "created_at": m.created_at,
                 "updated_at": m.updated_at, "tracks": entries}
 
@@ -190,7 +199,7 @@ class MixRepository:
             q.delete_mix_tracks_for_mix(mix_id=mix_id)
             q.delete_mix(id=mix_id)
 
-    def replace_chain(self, mix_id, tracks, durations, now=None):
+    def replace_chain(self, mix_id, tracks, duration_of, now=None):
         """Write the whole chain in one transaction.
 
         Used for structural edits (append, insert, delete, reorder) where the
@@ -203,7 +212,7 @@ class MixRepository:
             delta_s = beats_to_seconds(t["delta_beats"], t["grid_bpm"])
             start += delta_s
             entries.append({**t, "delta_s": delta_s, "offset_s": start,
-                            "duration_s": durations.get(t["track_id"], 0.0)})
+                            "duration_s": duration_of(t["track_id"], t["grid_bpm"])})
         check_overlaps(entries)
 
         node_ids = [t.get("node_id") or new_id() for t in tracks]
@@ -218,7 +227,7 @@ class MixRepository:
                            updated_at=now)
         return node_ids
 
-    def set_delta(self, mix_id, node_id, delta_beats, durations, now=None):
+    def set_delta(self, mix_id, node_id, delta_beats, duration_of, now=None):
         """The ripple edit a track drag makes: ONE row, ONE column.
 
         Validated against the overlap invariant before it is written, so the
@@ -246,7 +255,7 @@ class MixRepository:
             delta_s = beats_to_seconds(t["delta_beats"], t["grid_bpm"])
             start += delta_s
             entries.append({**t, "delta_s": delta_s, "offset_s": start,
-                            "duration_s": durations.get(t["track_id"], 0.0)})
+                            "duration_s": duration_of(t["track_id"], t["grid_bpm"])})
         check_overlaps(entries)
 
         with self.database.writing() as q:

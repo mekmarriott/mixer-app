@@ -102,16 +102,34 @@ def create_app(run_ingestion=True, database=None, warmup_async=False):
             return fn(*a, **kw)
         return wrapper
 
-    def track_durations(grid_only=False):
-        """track_id -> duration at its native tempo.
+    def track_durations():
+        """`(track_id, grid_bpm) -> seconds` for the overlap check.
 
-        Mixed tracks play a grid variant whose duration differs from native by
-        the stretch ratio; the chain stores `grid_bpm` per node, so the client
-        rescales. The server needs only a consistent basis for the overlap
-        check, and native is the one every track has.
+        The RENDERED VARIANT's duration, not the track's native one. A track
+        stretched onto a different grid genuinely plays for a different length
+        — up to 5s on the test catalog — and the client draws, plays and clamps
+        against the variant it loaded. Feeding native durations to
+        check_overlaps made the server disagree with the client about where a
+        track ends, so a placement the client had correctly clamped came back
+        409 and the mix silently failed to save.
+
+        Native remains the fallback for a track with no variant at that grid
+        (an ND track, or a grid point never rendered), which is the only case
+        where the two cannot differ anyway.
         """
         with database.reading() as q:
-            return {t.id: (t.duration_s or 0.0) for t in q.list_track_summaries()}
+            native = {t.id: (t.duration_s or 0.0) for t in q.list_track_summaries()}
+            rendered = {(v.track_id, int(v.grid_bpm)): (v.duration_s or 0.0)
+                        for v in q.list_all_variants()}
+
+        def duration_of(track_id, grid_bpm=None):
+            if grid_bpm is not None:
+                hit = rendered.get((track_id, int(grid_bpm)))
+                if hit:
+                    return hit
+            return native.get(track_id, 0.0)
+
+        return duration_of
 
     def mix_error(exc, code=409):
         resp = jsonify({"error": "invalid_chain", "detail": str(exc)})

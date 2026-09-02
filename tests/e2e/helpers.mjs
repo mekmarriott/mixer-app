@@ -32,6 +32,37 @@ export function expectNoFailedWrites() {
   expect(failedWrites, `the app had API writes rejected:\n${failedWrites.join("\n")}`)
     .toEqual([]);
 }
+
+/** The rejected writes recorded so far, for callers that poll. */
+export function failedWriteLog() {
+  return failedWrites;
+}
+
+/**
+ * Poll `read` until it equals `want`, but abandon EARLY if the app has had a
+ * write rejected.
+ *
+ * Without the early exit a rejected save shows up as "never reached N" after
+ * the full timeout — which reads like a slow test and buries the actual 409 in
+ * a trace nobody opens. The rejection is the failure; report it as one.
+ */
+export async function settleTo(read, want, what = "value") {
+  const deadline = Date.now() + 10_000;
+  let last;
+  for (;;) {
+    if (failedWrites.length) {
+      throw new Error(
+        `the app had a write rejected while waiting for ${what} to reach ` +
+        `${want} (last saw ${last}):\n${failedWrites.join("\n")}`);
+    }
+    last = await read();
+    if (last === want) return last;
+    if (Date.now() > deadline) {
+      throw new Error(`${what} never reached ${want} (last saw ${last})`);
+    }
+    await new Promise((r) => setTimeout(r, 100));
+  }
+}
 export const DRAGGABLE_ROW = `${DECK_ROW}[draggable="true"]`;
 
 /**

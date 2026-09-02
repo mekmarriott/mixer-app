@@ -19,19 +19,20 @@ from backend import config, ingest, jamendo, storage
 from backend.db import Database, status
 from backend.timing import Timer
 
+import teststore
+
 
 class ResumableCase(unittest.TestCase):
     """Each test gets its own catalog dir so state changes cannot leak."""
 
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp(prefix="djresume_"))
         self._saved = (config.DATA_DIR, config.AUDIO_DIR,
-                       config.VARIANT_DIR, config.DB_PATH)
-        config.DATA_DIR = self.tmp
-        config.AUDIO_DIR = self.tmp / "audio"
-        config.VARIANT_DIR = self.tmp / "variants"
-        config.DB_PATH = self.tmp / "test.sqlite3"
-        config.ensure_dirs()
+                       config.VARIANT_DIR, config.DB_PATH, config.DATABASE_URL)
+        # Overriding the paths is not enough: from_config() also reads
+        # DATABASE_URL, which .env.local sets to the shared local PostgreSQL.
+        # teststore.isolate() overrides that too. See tests/backend/teststore.py.
+        self.tmp = teststore.isolate(
+            config, tempfile.mkdtemp(prefix="djresume_"))
         self.database = Database.from_config().migrate()
         # One short house track keeps rendering cheap.
         self.entry = dict(FIXTURE_TRACKS[0], duration_s=8)
@@ -40,7 +41,7 @@ class ResumableCase(unittest.TestCase):
     def tearDown(self):
         self.database.dispose()
         (config.DATA_DIR, config.AUDIO_DIR,
-         config.VARIANT_DIR, config.DB_PATH) = self._saved
+         config.VARIANT_DIR, config.DB_PATH, config.DATABASE_URL) = self._saved
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     def ingest(self, **kw):

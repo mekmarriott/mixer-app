@@ -10,7 +10,8 @@
 // and pinning a click to an index would test the arithmetic in the test.
 import { test, expect } from "@playwright/test";
 import { bootApp, addFirstTrack, addSecondTrack, dragRowToTimeline,
-         DRAGGABLE_ROW, timelineBox, expectNoFailedWrites } from "./helpers.mjs";
+         DRAGGABLE_ROW, timelineBox, expectNoFailedWrites,
+         settleTo } from "./helpers.mjs";
 
 /** The persisted chain, which is the thing that has to be correct. */
 async function chain(page) {
@@ -32,9 +33,9 @@ async function chain(page) {
  * makes every click coordinate derived from it land on the wrong track.
  */
 async function settled(page, expected) {
-  await expect.poll(async () => (await chain(page)).length,
-                    { message: `chain never reached ${expected} tracks` })
-    .toBe(expected);
+  // Not expect.poll: a rejected save must surface as the rejection, not as a
+  // timeout ten seconds later that says nothing about why.
+  await settleTo(async () => (await chain(page)).length, expected, "the chain");
   return chain(page);
 }
 

@@ -17,7 +17,7 @@ grep -rhoE "P[1-4]-[0-9]{2}" tests/ | sort -u
 
 | Suite | Runner | Count | Runs in | What it is for |
 |---|---|---|---|---|
-| **Backend** | `unittest` (stdlib) | 227 | ~12 s | Pipeline, compliance gates, API contract, startup precompute and DB concurrency. Builds a real 5-track fixture catalog through one full ingestion. |
+| **Backend** | `unittest` (stdlib) | 252 | ~13 s | Pipeline, compliance gates, API contract, startup precompute and DB concurrency. Builds a real 5-track fixture catalog through one full ingestion. |
 | **Frontend logic** | `node:test` (stdlib) | 76 | <1 s | The pure interaction modules (`state`, `align`, `crossfade`, `navbar`, `deck`, `attribution`, `boot`) — no DOM, no WebAudio. |
 | **Browser** | Playwright + Chromium | 32 | ~57 s | What the other two structurally cannot reach: native drag-and-drop, canvas pixels, the WebAudio clock, and real network behaviour. |
 | **Manual** | a human with ears | 1 | — | Perceptual judgement only. |
@@ -159,6 +159,11 @@ which predates them.
 | INF-04 | Warmup reports progress; catalog endpoints gated until ready | Backend + Logic | `test_inf_04_status_reports_ready_with_pool_bounds`, `..._health_is_never_gated`, `..._catalog_endpoints_gated_until_ready`, `..._failed_warmup_reports_500_not_503` · 8 `INF-04:` tests in `boot.test.mjs` |
 | INF-05 | Zero state browses by genre within a cap; no scores, ND still listed | Backend | `test_inf_05_deck_groups_by_genre_within_cap`, `..._zero_state_carries_no_scores`, `..._caps_tracks_per_genre`, `..._largest_genre_leads`, `..._nd_tracks_are_listed_not_hidden` |
 | INF-06 | Popularity orders the deck when present, deterministically otherwise | Backend | `test_inf_06_popularity_orders_when_present`, `..._falls_back_to_a_deterministic_shuffle`, `..._partial_popularity_ranks_known_values_first` |
+| MIX-07 | The overlap check uses VARIANT durations, not native | Backend | `test_mix_07_variant_and_native_durations_actually_differ`, `..._transport_reports_the_variant_duration`, `..._a_placement_legal_by_variant_length_is_accepted` |
+| ISO-01 | The application's database URL never reaches the suite | Backend | `test_iso_01_application_database_url_is_ignored`, `..._isolate_overrides_a_configured_application_url` |
+| ISO-02 | A non-test database is refused, with a message that explains | Backend | `test_iso_02_a_dedicated_test_database_is_accepted`, `..._a_non_test_database_is_refused`, `..._the_refusal_explains_the_fix`, `..._blank_and_whitespace_mean_sqlite` |
+| ISO-03 | Every path is redirected into the test directory | Backend | `test_iso_03_isolate_redirects_every_path` |
+| ISO-04 | The shared fixture really lives in a temp directory | Backend | `test_iso_04_the_shared_fixture_lives_in_a_temp_directory`, `..._describe_names_the_store_in_use` |
 | API-01 | Parallel catalog reads all succeed | Browser | `API-01 parallel catalog reads all succeed` |
 | API-02 | In-flight DB work stays below the pool size | Browser | `API-02 the pool bounds in-flight DB work below its size` |
 | ZS-01 | Deck browses by genre with a bounded count per genre | Browser | `ZS-01 deck browses by genre with a bounded number of tracks each` |
@@ -167,19 +172,45 @@ which predates them.
 | ZS-04 | Status endpoint reports readiness and pool bounds | Browser | `ZS-04 status endpoint reports readiness and pool bounds` |
 | ZS-05 | Boot overlay is dismissed once the catalog is ready | Browser | `ZS-05 the boot overlay is dismissed once the catalog is ready` |
 
-### Run the backend suite through `run_tests.sh`, not `unittest` directly
+### Tests own their storage; they never inherit it
 
-`.env.local` is committed and sets `DJMIXER_DATABASE_URL` to the shared local
-PostgreSQL, so a bare `python -m unittest discover -s tests/backend` builds its
-fixture in the DEVELOPER'S catalog rather than a temp SQLite file. The symptom
-is a dozen unrelated failures — `spec()` raising `StopIteration` on tracks it
-has never heard of, empty variant lists — because the fixture is looking at
-someone else's data, and it writes its own rows there as a side effect.
+`.env.local` is committed and points `DJMIXER_DATABASE_URL` at the shared local
+PostgreSQL, so anything importing the backend picks up the developer's catalog
+by default — a test fixture included. That happened: a bare `python -m unittest
+discover -s tests/backend` built its fixture in the dev database, failed a
+dozen assertions on tracks it had never heard of, and left its own rows behind.
 
-`run_tests.sh` passes `DJMIXER_DATABASE_URL=` (empty) for exactly this reason,
-and `make test-pg` sets it explicitly to a dedicated `djmixer_test` database.
-Both are safe; the bare invocation is not. If the backend suite fails in ways
-that make no sense, check how it was invoked before reading the diff.
+Depending on the runner to blank the variable was not a fix, because the unsafe
+invocation is the short one anyone would type. `tests/backend/teststore.py` now
+makes the decision, and it can only resolve to storage dedicated to testing:
+
+- `DJMIXER_TEST_DATABASE_URL` — a deliberately separate variable. `make
+  test-pg` sets it to `djmixer_test`; nothing else does.
+- otherwise a throwaway SQLite file in a temp directory, removed at exit.
+
+`DJMIXER_DATABASE_URL` is ignored either way, and a test URL naming a database
+that does not look like a test database is REFUSED rather than used — so a
+mistyped Makefile fails loudly instead of quietly running against real data.
+`ISO-01..04` cover all of it, including that the guarantee survives a hostile
+environment. Every invocation is now safe, including the bare one.
+
+### Running the app locally
+
+Two servers, differing in their DATA rather than their code:
+
+| | catalog | store | port |
+|---|---|---|---|
+| `make serve` | real, ingested | **persistent** (`data/` + local PostgreSQL) | 5050 |
+| `make serve-fixture` | 9 synthetic tracks | throwaway (`data-fixture/`, SQLite) | 5051 |
+
+`make serve` is the one for testing against real material: it survives
+restarts, so a mix saved in the UI is still there afterwards, and it runs on
+Postgres, so it resembles production. It is never destructive.
+
+`make serve-fixture` starts in seconds, spends no Jamendo quota, and cannot
+reach the persistent store or the local PostgreSQL — both are overridden. It
+serves the same catalog the browser suite uses, so what you see by hand is what
+the tests see.
 
 ### Suite determinism
 
@@ -242,6 +273,11 @@ which predates them.
 | INF-04 | Warmup reports progress; catalog endpoints gated until ready | Backend + Logic | `test_inf_04_status_reports_ready_with_pool_bounds`, `..._health_is_never_gated`, `..._catalog_endpoints_gated_until_ready`, `..._failed_warmup_reports_500_not_503` · 8 `INF-04:` tests in `boot.test.mjs` |
 | INF-05 | Zero state browses by genre within a cap; no scores, ND still listed | Backend | `test_inf_05_deck_groups_by_genre_within_cap`, `..._zero_state_carries_no_scores`, `..._caps_tracks_per_genre`, `..._largest_genre_leads`, `..._nd_tracks_are_listed_not_hidden` |
 | INF-06 | Popularity orders the deck when present, deterministically otherwise | Backend | `test_inf_06_popularity_orders_when_present`, `..._falls_back_to_a_deterministic_shuffle`, `..._partial_popularity_ranks_known_values_first` |
+| MIX-07 | The overlap check uses VARIANT durations, not native | Backend | `test_mix_07_variant_and_native_durations_actually_differ`, `..._transport_reports_the_variant_duration`, `..._a_placement_legal_by_variant_length_is_accepted` |
+| ISO-01 | The application's database URL never reaches the suite | Backend | `test_iso_01_application_database_url_is_ignored`, `..._isolate_overrides_a_configured_application_url` |
+| ISO-02 | A non-test database is refused, with a message that explains | Backend | `test_iso_02_a_dedicated_test_database_is_accepted`, `..._a_non_test_database_is_refused`, `..._the_refusal_explains_the_fix`, `..._blank_and_whitespace_mean_sqlite` |
+| ISO-03 | Every path is redirected into the test directory | Backend | `test_iso_03_isolate_redirects_every_path` |
+| ISO-04 | The shared fixture really lives in a temp directory | Backend | `test_iso_04_the_shared_fixture_lives_in_a_temp_directory`, `..._describe_names_the_store_in_use` |
 | API-01 | Parallel catalog reads all succeed | Browser | `API-01 parallel catalog reads all succeed` |
 | API-02 | Admission caps how many requests are inside the database | Browser | `API-02 admission caps how many requests are inside the database` |
 | ZS-01 | Deck browses by genre with a bounded count per genre | Browser | `ZS-01 deck browses by genre with a bounded number of tracks each` |

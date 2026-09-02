@@ -9,6 +9,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+import teststore  # noqa: E402
+
 from backend import config  # noqa: E402
 
 FIXTURE_TRACKS = [
@@ -32,12 +34,9 @@ def get_fixture():
     if "database" in _cache:
         return _cache["database"], _cache["results"], _cache["tmp"]
 
-    tmp = Path(tempfile.mkdtemp(prefix="djtest_"))
-    config.DATA_DIR = tmp
-    config.AUDIO_DIR = tmp / "audio"
-    config.VARIANT_DIR = tmp / "variants"
-    config.DB_PATH = tmp / "test.sqlite3"
-    config.ensure_dirs()
+    # Storage is chosen by the suite, never inherited from the environment or
+    # from the committed .env.local — see tests/backend/teststore.py.
+    tmp = teststore.isolate(config)
 
     from backend import ingest
     from backend.db import Database

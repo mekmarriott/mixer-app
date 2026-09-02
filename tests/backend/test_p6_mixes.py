@@ -282,3 +282,91 @@ class TestMixListingCost(unittest.TestCase):
         counts = {m["name"]: m["track_count"] for m in self.client.get("/api/mixes").get_json()}
         self.assertEqual(counts["empty"], 0)
         self.assertEqual(counts["full"], 2)
+
+
+class TestDurationBasis(unittest.TestCase):
+    """MIX-07 — the overlap check must use VARIANT durations, not native.
+
+    A track stretched onto a different grid plays for a different length; the
+    two disagreed by up to 5s on the test catalog. The client draws, plays and
+    clamps against the variant it loaded, so feeding native durations to
+    check_overlaps made client and server disagree about where a track ends —
+    and a correctly clamped placement came back 409.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.database, _, cls.tmp = get_fixture()
+        app = create_app(run_ingestion=False, database=cls.database)
+        app.config["TESTING"] = True
+        cls.client = app.test_client()
+        cls.repo = app.config["MIXES"]
+        cls.app = app
+
+    def test_mix_07_variant_and_native_durations_actually_differ(self):
+        """Guards the premise: if these matched, the bug could not exist."""
+        with self.database.reading() as q:
+            native = {t.id: t.duration_s for t in q.list_track_summaries()}
+            variants = list(q.list_all_variants())
+        deltas = [abs(v.duration_s - native[v.track_id]) for v in variants]
+        self.assertTrue(deltas)
+        self.assertGreater(max(deltas), 0.4,
+                           "expected a real gap between native and variant length")
+
+    def test_mix_07_transport_reports_the_variant_duration(self):
+        ids = [t["id"] for t in self.client.get("/api/tracks").get_json()]
+        with self.database.reading() as q:
+            variants = {(v.track_id, v.grid_bpm): v.duration_s
+                        for v in q.list_all_variants()}
+            native = {t.id: t.duration_s for t in q.list_track_summaries()}
+
+        # Pick a track/grid whose variant length differs from native.
+        pick = next(((tid, bpm) for (tid, bpm), d in variants.items()
+                     if abs(d - native[tid]) > 0.4 and tid in ids), None)
+        self.assertIsNotNone(pick, "no track with a differing variant length")
+        tid, bpm = pick
+
+        m = self.client.post("/api/mixes", json={"name": "units"}).get_json()
+        r = self.client.put(f"/api/mixes/{m['id']}/tracks", json={"tracks": [
+            {"track_id": tid, "delta_beats": 0, "grid_bpm": bpm}]})
+        self.assertEqual(r.status_code, 200)
+
+        got = self.client.get(f"/api/mixes/{m['id']}").get_json()
+        self.assertAlmostEqual(got["tracks"][0]["duration_s"],
+                               variants[(tid, bpm)], places=3)
+        self.assertNotAlmostEqual(got["tracks"][0]["duration_s"],
+                                  native[tid], places=1)
+
+    def test_mix_07_a_placement_legal_by_variant_length_is_accepted(self):
+        """The exact shape that produced the 409.
+
+        Track 3 starts exactly where track 1's VARIANT ends. Under native
+        durations the server thought track 1 ran longer and refused it.
+        """
+        with self.database.reading() as q:
+            native = {t.id: t.duration_s for t in q.list_track_summaries()}
+            variants = {(v.track_id, v.grid_bpm): v.duration_s
+                        for v in q.list_all_variants()}
+
+        # A grid where the first track's variant is SHORTER than native — the
+        # direction in which native durations over-constrain the chain.
+        cand = next(((tid, bpm) for (tid, bpm), d in variants.items()
+                     if d < native[tid] - 0.4), None)
+        self.assertIsNotNone(cand, "no variant shorter than its native length")
+        first, grid = cand
+        others = [t for (t, b) in variants if b == grid and t != first]
+        self.assertGreaterEqual(len(others), 2, "need three tracks on one grid")
+
+        beat = 60.0 / grid
+        # Third track starts one beat after the first track's variant ends.
+        third_start = variants[(first, grid)] + beat
+        second_beats = max(1, int(round((third_start / 2) / beat)))
+        third_beats = max(1, int(round((third_start - second_beats * beat) / beat)))
+
+        m = self.client.post("/api/mixes", json={"name": "units-legal"}).get_json()
+        r = self.client.put(f"/api/mixes/{m['id']}/tracks", json={"tracks": [
+            {"track_id": first, "delta_beats": 0, "grid_bpm": grid},
+            {"track_id": others[0], "delta_beats": second_beats, "grid_bpm": grid},
+            {"track_id": others[1], "delta_beats": third_beats, "grid_bpm": grid},
+        ]})
+        self.assertEqual(r.status_code, 200, r.get_data(as_text=True))

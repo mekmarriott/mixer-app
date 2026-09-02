@@ -44,3 +44,6 @@ blobs/
 
 # Local screenshots from manual verification
 *.png
+
+# Synthetic server store — throwaway, rebuilt on demand
+data-fixture/

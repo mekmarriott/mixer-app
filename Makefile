@@ -68,6 +68,10 @@ PG_TEST_URL := postgresql://$(PGUSER)@127.0.0.1:$(PGPORT)/$(PGTESTDB)
 PGLOG    := $(PGDATA)/server.log
 
 PORT     ?= 5050
+# The synthetic server runs on its own port so it can sit alongside `serve`
+# without either one shadowing the other.
+FIXTURE_PORT ?= 5051
+FIXTURE_DIR  ?= $(ROOT)/data-fixture
 
 .PHONY: help test test-fast test-pg test-smoke test-browser check serve ingest ingest-dry env \
         db-up db-down db-reset db-shell db-url wait-pg up down status \
@@ -86,7 +90,8 @@ help:
 	@echo "  make up              start PostgreSQL (creates the cluster if needed)"
 	@echo "  make down            stop PostgreSQL. No data is deleted."
 	@echo "  make status          what is running, and what is on disk"
-	@echo "  make serve           run the app on :$(PORT)"
+	@echo "  make serve           real catalog, persistent store, on :$(PORT)"
+	@echo "  make serve-fixture   synthetic catalog, throwaway store, on :$(FIXTURE_PORT)"
 	@echo "  make db-shell        psql into the local database"
 	@echo "  make env             show the resolved configuration"
 	@echo "  make db-reset        drop + recreate the suite's database (safe)"
@@ -151,7 +156,7 @@ PG_TEST_MODULES ?= test_p5_*.py
 
 test-pg: deps db-up db-reset
 	@echo "== Backend suite against PostgreSQL ($(PG_TEST_MODULES)) =="
-	@DJMIXER_DATABASE_URL="$(PG_TEST_URL)" "$(PY)" -m unittest discover \
+	@DJMIXER_TEST_DATABASE_URL="$(PG_TEST_URL)" "$(PY)" -m unittest discover \
 	  -s tests/backend -t tests/backend -p "$(PG_TEST_MODULES)"
 
 # Drop and recreate the suite's database. Derived data only — no Jamendo
@@ -259,9 +264,42 @@ status:
 # App and catalog
 # ---------------------------------------------------------------------------
 
+# Two ways to run the app locally, and the difference is the DATA, not the code.
+#
+#   make serve          real catalog, PERSISTENT store.       Survives restarts.
+#   make serve-fixture  synthetic catalog, THROWAWAY store.   Deleted on demand.
+#
+# `serve` is the one to use for real testing: it reads the persistent store
+# under $(DATA_DIR) and the local PostgreSQL from .env.local, so what you see
+# is the catalog you actually ingested, and anything you build in the UI — a
+# saved mix, a rearranged chain — is still there after a restart. It is also
+# the only one that resembles production, since the database is Postgres.
+#
+# It deliberately does NOT reset anything. Ingested masters cost Jamendo quota
+# and variants cost CPU, so nothing here is destructive; use the tiered
+# clean-* targets when you actually want data gone.
 serve: deps
+	@echo "== Serving the PERSISTENT catalog on :$(PORT) =="
+	@echo "   database : $$( "$(PY)" -c "from backend import config; print(config.database_url())" )"
+	@echo "   data     : $(DATA_DIR)"
 	@"$(PY)" -c "from backend.app import create_app; \
-	  create_app().run(host='127.0.0.1', port=$(PORT))"
+	  create_app(warmup_async=True).run(host='127.0.0.1', port=$(PORT), threaded=True)"
+
+# The synthetic counterpart: nine deterministic tracks, a throwaway SQLite
+# catalog under $(FIXTURE_DIR), and no network. Use it for UI work — it starts
+# in seconds, spends no Jamendo quota, and cannot touch the persistent store or
+# the local PostgreSQL, because both are overridden here.
+#
+# This is the same catalog the browser suite uses, so what you see by hand is
+# what the tests see.
+serve-fixture: deps
+	@echo "== Serving the SYNTHETIC fixture catalog on :$(FIXTURE_PORT) =="
+	@echo "   data     : $(FIXTURE_DIR)  (throwaway — safe to delete)"
+	@DJMIXER_DATA="$(FIXTURE_DIR)" \
+	 DJMIXER_TRACKS="$(ROOT)/tests/e2e/tracks.e2e.json" \
+	 DJMIXER_DATABASE_URL= \
+	 "$(PY)" -c "from backend.app import create_app; \
+	  create_app(warmup_async=True).run(host='127.0.0.1', port=$(FIXTURE_PORT), threaded=True)"
 
 ingest-dry: deps
 	@"$(PY)" -m backend.publish --dry-run
