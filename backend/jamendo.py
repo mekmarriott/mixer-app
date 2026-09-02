@@ -4,7 +4,9 @@ Two modes, selected by config/tracks.json:
   jamendo  -- real Jamendo API v3.0 (requires network + JAMENDO_CLIENT_ID).
               Only tracks with audiodownload_allowed=true are accepted
               (test P1-01), and the per-track CC license is read from the
-              API's license_ccurl field.
+              API's license_ccurl field. Metadata lookups retry the empty
+              HTTP 200 the API intermittently returns — see
+              EMPTY_RESULT_RETRIES and fetch_track_metadata below.
   offline  -- deterministic synthesis from the same config entries, so the
               full pipeline runs without network. License/BPM/key come from
               the config entry, standing in for API metadata.
@@ -12,6 +14,7 @@ Two modes, selected by config/tracks.json:
 Both return the same shape: (metadata dict, samples ndarray, sample_rate).
 """
 import os
+import time
 
 import numpy as np
 
@@ -19,6 +22,16 @@ from . import config, licensing, synth
 from .audio_io import save_wav
 
 JAMENDO_API = "https://api.jamendo.com/v3.0"
+
+# Jamendo intermittently answers a perfectly valid track query with HTTP 200,
+# an envelope reporting success (code 0), and an *empty* results array. It was
+# measured on the live API at a 27-50% rate, and the loss is all-or-nothing
+# rather than partial. So an empty success is never evidence that a track is
+# gone — it means "ask again". Treating it as absence silently drops tracks
+# from an import that then reports success, which is the failure mode this
+# retry exists to prevent.
+EMPTY_RESULT_RETRIES = 4
+RETRY_BASE_DELAY_S = 0.5
 
 
 class TrackSourceError(Exception):
@@ -56,8 +69,51 @@ def _fetch_offline(entry):
     return meta, samples, config.SAMPLE_RATE
 
 
+def _http_get_json(url, params, timeout=30):  # pragma: no cover - requires network
+    import requests
+
+    r = requests.get(url, params=params, timeout=timeout)
+    r.raise_for_status()
+    return r.json()
+
+
+def fetch_track_metadata(track_id, client_id, get=_http_get_json, sleep=time.sleep):
+    """One track's API metadata, retrying Jamendo's empty-but-successful replies.
+
+    Distinguishes three outcomes that the previous one-shot call collapsed into
+    "not found":
+
+      * envelope reports an error code -> fail immediately, no retry (a bad
+        client id or a malformed query does not get better by asking again);
+      * HTTP 200, code 0, empty results  -> transient, retry with backoff;
+      * results present                  -> return the first.
+
+    Exhausting the retries still raises, but says what actually happened rather
+    than asserting the track is missing.
+    """
+    params = {"client_id": client_id, "id": track_id, "format": "json",
+              "audioformat": "mp32", "include": "licenses"}
+    for attempt in range(EMPTY_RESULT_RETRIES + 1):
+        payload = get(f"{JAMENDO_API}/tracks", params)
+        headers = payload.get("headers") or {}
+        code = headers.get("code", 0)
+        if code:
+            raise TrackSourceError(
+                "Jamendo API error %s for track %s: %s"
+                % (code, track_id, headers.get("error_message") or "no message"))
+        results = payload.get("results") or []
+        if results:
+            return results[0]
+        if attempt < EMPTY_RESULT_RETRIES:
+            sleep(RETRY_BASE_DELAY_S * (2 ** attempt))
+    raise TrackSourceError(
+        "Jamendo returned an empty success for track %s on all %d attempts. "
+        "This is not proof the track is gone: Jamendo answers valid queries "
+        "with an empty HTTP 200 intermittently. Re-run before treating the "
+        "track as missing." % (track_id, EMPTY_RESULT_RETRIES + 1))
+
+
 def _fetch_jamendo(entry):  # pragma: no cover - requires network
-    import io
     import wave as wave_mod
 
     import requests
@@ -65,14 +121,7 @@ def _fetch_jamendo(entry):  # pragma: no cover - requires network
     client_id = os.environ.get("JAMENDO_CLIENT_ID")
     if not client_id:
         raise TrackSourceError("JAMENDO_CLIENT_ID env var required for jamendo mode")
-    r = requests.get(f"{JAMENDO_API}/tracks", params={
-        "client_id": client_id, "id": entry["id"], "format": "json",
-        "audioformat": "mp32", "include": "licenses"}, timeout=30)
-    r.raise_for_status()
-    results = r.json().get("results", [])
-    if not results:
-        raise TrackSourceError(f"Jamendo track {entry['id']} not found")
-    t = results[0]
+    t = fetch_track_metadata(entry["id"], client_id)
     license_name = _license_from_ccurl(t.get("license_ccurl", ""))
     meta = {"id": str(t["id"]), "name": t["name"], "artist": t["artist_name"],
             "genre": entry.get("genre", "house"), "license": license_name,

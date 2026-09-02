@@ -212,5 +212,81 @@ class TestP1Ingestion(unittest.TestCase):
                 self.assertEqual(got, expected)
 
 
+class TestJamendoEmptyResultRetry(unittest.TestCase):
+    """P1-01 (source layer): Jamendo answers valid queries with an empty
+    HTTP 200 intermittently — measured at 27-50% on the live API, and
+    all-or-nothing rather than partial. An empty success must be retried, never
+    reported as a missing track, or an import silently drops tracks and still
+    reports success.
+
+    The transport and the sleep are injected, so the retry policy is tested
+    without network and without real delays."""
+
+    OK = {"headers": {"code": 0}, "results": [{"id": "1001", "name": "Neon"}]}
+    EMPTY = {"headers": {"code": 0, "error_message": ""}, "results": []}
+
+    def _get(self, *payloads):
+        """A fake transport returning `payloads` in order, recording calls."""
+        calls = []
+
+        def get(url, params, timeout=30):
+            calls.append((url, dict(params)))
+            return payloads[min(len(calls) - 1, len(payloads) - 1)]
+
+        return get, calls
+
+    def setUp(self):
+        self.slept = []
+
+    def test_empty_success_is_retried_until_results_arrive(self):
+        get, calls = self._get(self.EMPTY, self.EMPTY, self.OK)
+        track = jamendo.fetch_track_metadata(
+            "1001", "cid", get=get, sleep=self.slept.append)
+        self.assertEqual(track["id"], "1001")
+        self.assertEqual(len(calls), 3)
+
+    def test_a_first_attempt_hit_does_not_sleep(self):
+        get, calls = self._get(self.OK)
+        jamendo.fetch_track_metadata("1001", "cid", get=get, sleep=self.slept.append)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(self.slept, [])
+
+    def test_backoff_grows_between_attempts(self):
+        get, _ = self._get(self.EMPTY, self.EMPTY, self.OK)
+        jamendo.fetch_track_metadata("1001", "cid", get=get, sleep=self.slept.append)
+        self.assertEqual(self.slept, [jamendo.RETRY_BASE_DELAY_S,
+                                      jamendo.RETRY_BASE_DELAY_S * 2])
+
+    def test_persistent_empty_does_not_claim_the_track_is_missing(self):
+        """The whole point: exhausting retries reports what happened rather
+        than asserting absence."""
+        get, calls = self._get(self.EMPTY)
+        with self.assertRaises(jamendo.TrackSourceError) as cm:
+            jamendo.fetch_track_metadata("1001", "cid", get=get,
+                                         sleep=self.slept.append)
+        message = str(cm.exception)
+        self.assertIn("not proof the track is gone", message)
+        self.assertNotIn("not found", message)
+        self.assertEqual(len(calls), jamendo.EMPTY_RESULT_RETRIES + 1)
+
+    def test_an_api_error_code_fails_immediately_without_retrying(self):
+        """A bad client id or malformed query does not improve on retry."""
+        error = {"headers": {"code": 5, "error_message": "Your credential is not valid"},
+                 "results": []}
+        get, calls = self._get(error)
+        with self.assertRaises(jamendo.TrackSourceError) as cm:
+            jamendo.fetch_track_metadata("1001", "cid", get=get,
+                                         sleep=self.slept.append)
+        self.assertIn("credential is not valid", str(cm.exception))
+        self.assertEqual(len(calls), 1, "retried a permanent error")
+        self.assertEqual(self.slept, [])
+
+    def test_the_track_id_reaches_the_query(self):
+        get, calls = self._get(self.OK)
+        jamendo.fetch_track_metadata("2001", "cid", get=get, sleep=self.slept.append)
+        self.assertEqual(calls[0][1]["id"], "2001")
+        self.assertEqual(calls[0][1]["client_id"], "cid")
+
+
 if __name__ == "__main__":
     unittest.main()
