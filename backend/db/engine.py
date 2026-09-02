@@ -30,7 +30,8 @@ import sqlite3
 import threading
 import time
 from pathlib import Path
-from urllib.parse import unquote, urlparse
+from urllib.parse import (parse_qsl, unquote, urlencode, urlparse,
+                          urlunparse)
 
 from . import dialect
 
@@ -355,6 +356,41 @@ def uses_transaction_pooler(url):
     return "pooler." in (parsed.hostname or "")
 
 
+#: Query parameters libpq understands. Anything else in a connection URL is a
+#: vendor marker, not a connection setting.
+_LIBPQ_PARAMS = frozenset((
+    "sslmode", "sslrootcert", "sslcert", "sslkey", "connect_timeout",
+    "application_name", "fallback_application_name", "options",
+    "target_session_attrs", "client_encoding", "keepalives",
+    "keepalives_idle", "keepalives_interval", "keepalives_count",
+))
+
+
+def libpq_url(url):
+    """Strip vendor-only query parameters from a PostgreSQL URL.
+
+    Supabase hands out its pooler URL with `supa=base-pooler.x` attached, and
+    the Prisma variant adds `pgbouncer=true`. Neither is a libpq parameter, and
+    libpq does not ignore what it does not know — it refuses the whole string
+    with `invalid URI query parameter: "supa"`. So the URL that Supabase (and
+    the Vercel integration that copies it into the environment) gives you
+    cannot be handed to psycopg unedited, which is exactly what a caller who
+    pastes it into DJMIXER_DATABASE_URL would do.
+
+    Dropping the markers loses nothing: `pgbouncer=true` tells Prisma to
+    disable prepared statements, and PostgresEngine already decides that for
+    itself from the port (see `uses_transaction_pooler`).
+    """
+    parsed = urlparse(url)
+    if not parsed.query:
+        return url
+    kept = [(k, v) for k, v in parse_qsl(parsed.query, keep_blank_values=True)
+            if k in _LIBPQ_PARAMS]
+    if len(kept) == len(parse_qsl(parsed.query, keep_blank_values=True)):
+        return url
+    return urlunparse(parsed._replace(query=urlencode(kept)))
+
+
 def engine_from_url(url, **kwargs):
     """Build the engine named by a database URL.
 
@@ -376,5 +412,5 @@ def engine_from_url(url, **kwargs):
                 "per-thread, so each thread would get its own empty database")
         return SQLiteEngine(path, **kwargs)
     if scheme in ("postgres", "postgresql"):
-        return PostgresEngine(url, **kwargs)
+        return PostgresEngine(libpq_url(url), **kwargs)
     raise DatabaseError("unsupported database URL scheme: %r" % parsed.scheme)

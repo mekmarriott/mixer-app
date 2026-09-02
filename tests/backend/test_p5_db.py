@@ -176,6 +176,29 @@ class TestUrls(unittest.TestCase):
         self.assertFalse(uses_transaction_pooler(
             "postgresql://u:p@db.abcdef.supabase.co:5432/postgres"))
 
+    def test_vendor_query_parameters_are_stripped(self):
+        """libpq refuses a URL carrying a parameter it does not know, so
+        Supabase's own `supa=` marker (and Prisma's `pgbouncer=`) has to come
+        off before psycopg sees it — otherwise the connection string the
+        Supabase dashboard hands you cannot be used unedited."""
+        self.assertEqual(
+            engine_mod.libpq_url(
+                "postgresql://u:p@aws-0-eu-west-1.pooler.supabase.com:6543"
+                "/postgres?sslmode=require&supa=base-pooler.x"),
+            "postgresql://u:p@aws-0-eu-west-1.pooler.supabase.com:6543"
+            "/postgres?sslmode=require")
+        self.assertEqual(
+            engine_mod.libpq_url(
+                "postgresql://u:p@h:6543/postgres?pgbouncer=true"),
+            "postgresql://u:p@h:6543/postgres")
+
+    def test_known_libpq_parameters_survive_untouched(self):
+        url = ("postgresql://u:p@h:5432/db"
+               "?sslmode=require&connect_timeout=10&application_name=djmixer")
+        self.assertEqual(engine_mod.libpq_url(url), url)
+        self.assertEqual(engine_mod.libpq_url("postgresql://u:p@h:5432/db"),
+                         "postgresql://u:p@h:5432/db")
+
 
 class TestScopes(unittest.TestCase):
     """Transaction scoping, nesting and rollback."""
