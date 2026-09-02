@@ -19,6 +19,7 @@ from fixture import get_fixture, read
 
 from backend import config, dbguard, deck, waveforms
 from backend.app import create_app
+from backend.timing import Timer
 
 
 class TestInfraApp(unittest.TestCase):
@@ -340,3 +341,32 @@ class TestZeroStateSelection(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestTelemetryIsNotLoadBearing(unittest.TestCase):
+    """Measuring a request must never be able to fail it."""
+
+    class Exploding:
+        class catalog:
+            @staticmethod
+            def record_latency(*a, **kw):
+                raise RuntimeError("database is read-only")
+
+    def test_a_failing_latency_write_does_not_break_the_stage(self):
+        """The recorder runs in a `finally`, so a raise there replaces
+        whatever the request was about to return — a successful response
+        included. A read-only database turned every recommendation and
+        transition into a 500 that way, after the work had already succeeded.
+        """
+        timer = Timer(self.Exploding())
+        with timer.stage("recommend", "1001"):
+            pass                                # must not raise
+        self.assertEqual(len(timer.records), 1)
+        self.assertEqual(timer.records[0][0], "recommend")
+
+    def test_the_result_of_the_stage_still_reaches_the_caller(self):
+        timer = Timer(self.Exploding())
+        out = []
+        with timer.stage("transition_curve"):
+            out.append("computed")
+        self.assertEqual(out, ["computed"])

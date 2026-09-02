@@ -19,7 +19,17 @@ class Timer:
             ms = (time.perf_counter() - t0) * 1000.0
             self.records.append((name, track_id, ms))
             if self.database is not None:
-                self.database.catalog.record_latency(name, track_id, ms, time.time())
+                try:
+                    self.database.catalog.record_latency(name, track_id, ms,
+                                                         time.time())
+                except Exception:
+                    # Measuring a request must never be able to fail it. This
+                    # runs in a `finally`, so a raise here replaces whatever
+                    # the request was returning — including a successful
+                    # response — with a 500. A database that has gone
+                    # read-only turned every recommendation and transition
+                    # into an error that way, after the work had succeeded.
+                    pass
 
     def by_stage(self):
         agg = {}
