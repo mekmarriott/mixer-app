@@ -53,10 +53,12 @@ def load_env_file(path=ENV_FILE):
 load_env_file(ENV_FILE)             # secrets first: they win over the defaults
 load_env_file(LOCAL_ENV_FILE)       # committed local endpoints
 
-# Jamendo credentials. JAMENDO_CLIENT_ID is the documented name;
-# JAMENDO_API_CLIENT is what Jamendo's own dashboard calls it, and is accepted
-# so a .env copied straight from there works unedited.
-JAMENDO_CLIENT_ID_VARS = ("JAMENDO_CLIENT_ID", "JAMENDO_API_CLIENT")
+# Jamendo credentials. JAMENDO_API_CLIENT is the primary name: it is what
+# Jamendo's own dashboard calls the field, so a .env pasted straight from
+# there works unedited, and it is what this project's .env and Vercel project
+# actually use. JAMENDO_CLIENT_ID stays accepted for anyone following older
+# docs, but it is the alias now, not the canonical name.
+JAMENDO_CLIENT_ID_VARS = ("JAMENDO_API_CLIENT", "JAMENDO_CLIENT_ID")
 
 
 def jamendo_client_id():

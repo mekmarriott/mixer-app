@@ -145,7 +145,7 @@ def require_client_id():
     client_id = config.jamendo_client_id()
     if not client_id:
         raise TrackSourceError(
-            "No Jamendo client id: set JAMENDO_CLIENT_ID (or JAMENDO_API_CLIENT) "
+            "No Jamendo client id: set JAMENDO_API_CLIENT (or JAMENDO_CLIENT_ID) "
             "in the environment or in .env")
     return client_id
 

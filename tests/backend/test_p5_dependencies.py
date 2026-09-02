@@ -221,15 +221,21 @@ class TestCatalogConfig(unittest.TestCase):
 
 class TestJamendoCredentials(unittest.TestCase):
     def test_client_id_accepts_either_env_name(self):
+        """JAMENDO_API_CLIENT is canonical — it is what Jamendo's dashboard
+        calls the field and what .env actually holds — and JAMENDO_CLIENT_ID
+        remains an accepted alias for anyone following older docs."""
         saved = {k: os.environ.get(k) for k in config.JAMENDO_CLIENT_ID_VARS}
         try:
             for k in config.JAMENDO_CLIENT_ID_VARS:
                 os.environ.pop(k, None)
             self.assertIsNone(config.jamendo_client_id())
+
+            os.environ["JAMENDO_CLIENT_ID"] = "legacy-alias"
+            self.assertEqual(config.jamendo_client_id(), "legacy-alias")
+
+            # The dashboard name wins when both are present.
             os.environ["JAMENDO_API_CLIENT"] = "from-dashboard"
             self.assertEqual(config.jamendo_client_id(), "from-dashboard")
-            os.environ["JAMENDO_CLIENT_ID"] = "documented-name"
-            self.assertEqual(config.jamendo_client_id(), "documented-name")
         finally:
             for k, v in saved.items():
                 if v is None:
