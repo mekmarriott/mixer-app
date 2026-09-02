@@ -9,16 +9,16 @@ transition markers. Implements the companion docs (in `docs/`)
 
 ## Requirements
 
-- Python 3.9+ (developed on 3.13) — dependencies pinned in `requirements.txt`
-- `ffmpeg` on PATH (Jamendo MP3 decode, `jamendo` mode only)
+- Python 3.9–3.13 (developed on 3.13) — dependencies pinned in `requirements.txt`
 - Node 22+ — **tests only**; the app itself has no build step and ships no
   npm runtime dependencies
-- Optional, auto-detected: `rubberband` CLI (higher-quality stretch),
-  `essentia` Python package (production analysis)
+- Two binaries on PATH: **ffmpeg** (decodes Jamendo MP3s) and **rubberband**
+  (production time-stretch)
 
 ## Setup
 
 ```bash
+brew install ffmpeg rubberband     # macOS; apt: ffmpeg rubberband-cli
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 
@@ -28,6 +28,39 @@ npx playwright install chromium    # browser suite only
 
 There is still no bundler and no migrations. `npm` exists solely to run the
 browser suite — nothing in `frontend/` imports a package.
+
+### Dependency seams
+
+Three real dependencies do the heavy lifting, each behind a seam with a
+numpy/scipy stand-in so the pipeline still runs on a bare install:
+
+| Job | Production engine | Fallback if absent |
+|---|---|---|
+| BPM, beat grid, key, frame features | **Essentia** | numpy/scipy DSP |
+| BPM-grid variant rendering | **Rubber Band** (R3 engine) | scipy phase vocoder |
+| Track source + licensing | **Jamendo API** | synthesized `offline` mode |
+
+A fallback is a *different engine*, not a slower one, so it must never engage
+unnoticed in production. `GET /api/credits` and every stored analysis record
+which engine actually ran (`analysis.engine`), and two env vars turn a silent
+downgrade into a startup failure:
+
+```bash
+export DJMIXER_REQUIRE_ESSENTIA=1
+export DJMIXER_REQUIRE_RUBBERBAND=1
+```
+
+### Jamendo credentials
+
+Put a (free) Jamendo client id in a **`.env`** at the repo root — it is
+gitignored and read automatically at startup, so no shell setup is needed:
+
+```
+JAMENDO_CLIENT_ID=your_client_id
+```
+
+`JAMENDO_API_CLIENT` is accepted too, since that is what Jamendo's own
+dashboard calls the field. Real environment variables always win over `.env`.
 
 ## Run locally
 
@@ -44,31 +77,103 @@ no per-track requests at all.
 
 Ingestion pulls from the track list in `config/tracks.json`:
 fetch → license gate → analysis (BPM/key/beat grid/segments/prefix sums) →
-BPM-grid variant rendering. First start takes ~45 s for the 9-track demo
-catalog (progress prints per track); results are cached in `data/`, so
-subsequent starts are instant. Delete `data/` to force re-ingestion.
+BPM-grid variant rendering. First start takes **~4–5 min** for the 12-track
+demo catalog of real Jamendo audio (progress prints per track; roughly 7 s
+fetch + 2 s analysis + 17 s variant rendering each). Results are cached in
+`data/`, so subsequent starts are instant. Delete `data/` to force
+re-ingestion.
 
 ND-licensed tracks are ingested for playback/metadata but get **no**
 stretched variants and are excluded from all mixing features (this is the
 CC-BY-ND compliance rule, not a bug).
 
-### Using real Jamendo tracks
+### Ingestion is resumable — nothing is downloaded twice
 
-`config/tracks.json` ships in `"mode": "offline"` (deterministic synthesized
-tracks — works with zero network, which is how this repo was developed and
-tested). To ingest real Jamendo audio:
+Each track carries a `status` high-water mark:
 
-1. Get a (free) Jamendo API client id.
-2. `export JAMENDO_CLIENT_ID=your_id`
-3. In `config/tracks.json`: set `"mode": "jamendo"` and put real Jamendo
-   track ids in the `id` fields (keep a `genre` matching a bucket in
-   `backend/config.py`; `bpm`/`key` fields are ignored in this mode — they
-   are detected).
-4. Restart with an empty `data/` dir.
+```
+pending → fetched → analyzed → ready
+```
 
-Only tracks with `audiodownload_allowed=true` are accepted; each track's CC
-license is read from the API and every variant (BY / -SA / -NC / -ND /
--NC-SA / -NC-ND) is stored and enforced.
+Every stage is skipped when its output is already durably on disk, so a
+restart only does the work that is actually missing:
+
+- a track at `ready` is skipped entirely — **no request is made for it**
+- a crash after download re-analyzes from the persisted master, without
+  re-fetching the audio
+- a deleted variant file is re-rendered on its own; intact ones are not
+- a missing master *is* re-fetched — the disk wins over the recorded state
+
+Failures never rewind that mark. A track that dies during analysis stays at
+`fetched` with the reason in `status_error`, so retrying resumes instead of
+restarting, and one bad track does not abort the rest of the catalog.
+
+`GET /api/ingest` reports the whole picture — per-track status, stage
+timestamps, variant counts, and any error. `/api/tracks` only lists tracks at
+`ready`, so a half-ingested track is never advertised to the UI.
+
+To rebuild from scratch, delete `data/`; to redo one stage, clear that
+track's status (or call `ingest_track(..., force=True)`).
+
+### The catalog
+
+`config/tracks.json` ships in `"mode": "jamendo"` with **72 tracks from the
+Jamendo ["Fresh & New" playlist](https://www.jamendo.com/playlist/500608490/fresh-and-new)**.
+Each track's CC licence — **including its version**, mostly 3.0 rather than
+4.0 — is read from the API and enforced.
+
+Of the playlist's 84 entries, 83 resolve through the API and **11 are excluded
+because Jamendo reports `audiodownload_allowed=false`**: the P1-01 gate
+refuses them before any download, so they cannot be ingested at all.
+
+> ### ⚠️ Most of this catalog cannot be mixed
+>
+> **64 of the 72 tracks are ND-licensed** (58 BY-NC-ND, 3 BY-ND, plus others).
+> ND forbids derivative works, and a time-stretched variant *is* a derivative,
+> so those tracks get no variants and are excluded from every mixing feature.
+> That is the compliance rule in `docs/requirements.md` §2 working correctly —
+> not a bug — but it means the catalog supports:
+>
+> - **8 mixable tracks**, forming **5 mixable pairs**
+> - 64 tracks that are browsable and playable at native tempo only
+>
+> The playlist is curated for freshness, not for permissive licensing. If you
+> want a catalog that exercises the mixer properly, filter a Jamendo search by
+> licence instead (`ccnd=false`), which is how the previous 12-track catalog
+> was built — see git history for that version.
+
+Tempo bands (`BPM_BUCKETS` in `backend/config.py`) define which tracks can
+meet at a shared BPM. Because a "fresh & new" pop playlist spans tempos no
+genre label predicts, the bands are named for tempo rather than genre, and
+each track's band is assigned from its *detected* BPM:
+
+| Band | BPM | Tracks |
+|---|---|---|
+| `slow` | 70–84 | 1 |
+| `downtempo` | 85–95 | 7 |
+| `midtempo` | 96–119 | 24 |
+| `house` | 120–128 | 14 |
+| `uptempo` | 129–152 | 21 |
+| `fast` | 153–182 | 5 |
+
+The `bpm`/`key` fields are the values Essentia measured at curation time. In
+`jamendo` mode they are informational (everything is re-detected); switching
+`"mode"` to `"offline"` uses them to synthesize a stand-in catalog of the same
+shape that needs no network or credentials.
+
+To swap in your own tracks, replace the `id`/`genre` fields and restart with
+an empty `data/`. A track whose detected BPM reaches no grid point in its band
+can never be mixed; `tests/backend/test_p5_dependencies.py` asserts the
+shipped catalog still contains at least one genuinely mixable pair.
+
+> **Note on the Jamendo API terms.** The API terms restrict applications
+> "specifically designed to cache the content nor offering an offline access
+> to the content", allowing caching "only to the extent reasonably necessary
+> for the operation of the Application". This prototype permanently stores
+> downloaded masters *and* rendered variants under `data/`, which the
+> pre-rendered-variant design depends on. That is a separate question from the
+> per-track CC licence (see `docs/requirements.md` §2) — the CC licence may
+> permit a copy that the API terms restrict. Flagged, not resolved.
 
 ## Using the app
 
@@ -104,13 +209,31 @@ npm run test:e2e                                                      # 18, ~23 
 ```
 
 Test names mirror the testing-document ids (P1-01…P4-29). Backend tests build
-a real 5-track fixture catalog (one full ingestion, shared across modules).
-Frontend tests run the pure interaction-logic modules under `node:test` — see
-`docs/design-document.md` §8 for the seam. The Playwright suite drives a real
-Chromium against its own Flask server on port **5199** with its own catalog in
-`data-e2e/`, covering what the other suites structurally cannot: native
-drag-and-drop, canvas rendering, the WebAudio clock, and network silence
-during drag.
+a real 5-track fixture catalog (one full ingestion, shared across modules) —
+synthesized, not fetched, so the suite stays hermetic and has known BPM/key
+ground truth to assert Essentia against. Frontend tests run the pure
+interaction-logic modules under `node:test` — see `docs/design-document.md`
+§8 for the seam. The Playwright suite drives a real Chromium against its own
+Flask server on port **5199** with its own catalog in `data-e2e/`, covering
+what the other suites structurally cannot: native drag-and-drop, canvas
+rendering, the WebAudio clock, and network silence during drag.
+
+`test_p5_dependencies.py` covers the three provider seams: that Essentia is
+the engine *actually* running rather than merely the one being reported, that
+Rubber Band renders to the requested duration on the R3 engine, and that CC
+licence versions survive the round trip. `test_p6_resumable.py` covers the
+ingestion state machine and crash recovery — including that a failed attempt
+never causes already-downloaded audio to be fetched again. Engine-specific
+cases skip when the dependency is absent.
+
+Three further tests hit the live Jamendo API and are opt-in, since the network
+is involved:
+
+```bash
+DJMIXER_LIVE_TESTS=1 ./run_tests.sh --fast
+# verifies every catalog track is still fetchable and still carries the
+# licence recorded in config/tracks.json
+```
 
 **`docs/automation-test-manifest.md` is the coverage map** — every
 testing-document id, the suite and test that proves it, the remaining gap, and
@@ -127,6 +250,9 @@ editing anything under `backend/db/sql/`, regenerate and commit the result:
 ```bash
 .venv/bin/python -m backend.db.codegen
 ```
+
+`migrate()` is additive: a column added to `schema.sql` is applied to an
+existing catalog on the next start, so upgrading does not mean re-ingesting.
 
 Deploying against Supabase is a connection string, not a code change:
 

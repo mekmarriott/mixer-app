@@ -31,13 +31,21 @@ class Track:
     audio_path: str
     analysis_json: Any
     segments_json: Any
+    status: str
+    status_error: str
+    source_url: str
+    fetched_at: float
+    analyzed_at: float
+    ready_at: float
 
     _FIELDS = (
         ("id", "TEXT"), ("name", "TEXT"), ("artist", "TEXT"), ("genre", "TEXT"),
         ("license", "TEXT"), ("license_nd", "BOOLEAN"), ("license_sa", "BOOLEAN"),
         ("license_nc", "BOOLEAN"), ("mixable", "BOOLEAN"), ("native_bpm", "REAL"),
         ("camelot", "TEXT"), ("duration_s", "REAL"), ("audio_path", "TEXT"),
-        ("analysis_json", "JSONDOC"), ("segments_json", "JSONDOC"),
+        ("analysis_json", "JSONDOC"), ("segments_json", "JSONDOC"), ("status", "TEXT"),
+        ("status_error", "TEXT"), ("source_url", "TEXT"), ("fetched_at", "REAL"),
+        ("analyzed_at", "REAL"), ("ready_at", "REAL"),
     )
 
     @classmethod
@@ -125,12 +133,13 @@ class ListTrackSummariesRow:
     native_bpm: float
     camelot: str
     duration_s: float
+    status: str
 
     _FIELDS = (
         ("id", "TEXT"), ("name", "TEXT"), ("artist", "TEXT"), ("genre", "TEXT"),
         ("license", "TEXT"), ("license_nd", "BOOLEAN"), ("license_sa", "BOOLEAN"),
         ("license_nc", "BOOLEAN"), ("mixable", "BOOLEAN"), ("native_bpm", "REAL"),
-        ("camelot", "TEXT"), ("duration_s", "REAL"),
+        ("camelot", "TEXT"), ("duration_s", "REAL"), ("status", "TEXT"),
     )
 
     @classmethod
@@ -139,4 +148,30 @@ class ListTrackSummariesRow:
                      for i, (_, t) in enumerate(cls._FIELDS)))
 
 
-__all__ = ["Track", "Variant", "Latency", "LatencySummaryRow", "ListTrackSummariesRow"]
+@dataclasses.dataclass(frozen=True)
+class ListTrackStatusesRow:
+    """Result row of the ListTrackStatuses query."""
+
+    id: str
+    name: str
+    artist: str
+    mixable: bool
+    status: str
+    status_error: str
+    fetched_at: float
+    analyzed_at: float
+    ready_at: float
+
+    _FIELDS = (
+        ("id", "TEXT"), ("name", "TEXT"), ("artist", "TEXT"), ("mixable", "BOOLEAN"),
+        ("status", "TEXT"), ("status_error", "TEXT"), ("fetched_at", "REAL"),
+        ("analyzed_at", "REAL"), ("ready_at", "REAL"),
+    )
+
+    @classmethod
+    def _from_row(cls, row):
+        return cls(*(decode(row[i], t)
+                     for i, (_, t) in enumerate(cls._FIELDS)))
+
+
+__all__ = ["Track", "Variant", "Latency", "LatencySummaryRow", "ListTrackSummariesRow", "ListTrackStatusesRow"]

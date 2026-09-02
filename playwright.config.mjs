@@ -69,6 +69,12 @@ export default defineConfig({
   // Ingestion runs on first boot into a dedicated data dir, so the e2e catalog
   // is independent of whatever is in ./data. First run takes ~1 min; after that
   // the dir is cached and startup is immediate. Delete data-e2e/ to rebuild.
+  //
+  // DJMIXER_TRACKS points at the suite's own catalog rather than
+  // config/tracks.json: these specs need a fixed set of mixable, harmonically
+  // adjacent tracks, and the shipped catalog is a live Jamendo playlist that
+  // needs network, takes ~10 min to ingest, and is ~90% ND-licensed (so almost
+  // nothing in it can be dragged together at all).
   webServer: {
     // create_app() is invoked directly rather than via `python -m backend.app`
     // so the port can be chosen here without patching the backend.
@@ -80,7 +86,11 @@ export default defineConfig({
     // Flask's send_file resolves relative paths against the app root
     // (backend/), not the cwd — a relative value here yields 404/500 on every
     // audio and waveform request.
-    env: { DJMIXER_DATA: path.join(ROOT, "data-e2e"), PYTHONUNBUFFERED: "1" },
+    env: {
+      DJMIXER_DATA: path.join(ROOT, "data-e2e"),
+      DJMIXER_TRACKS: path.join(ROOT, "tests", "e2e", "tracks.e2e.json"),
+      PYTHONUNBUFFERED: "1",
+    },
     timeout: 300_000,
     reuseExistingServer: !process.env.CI,
     stdout: "pipe",

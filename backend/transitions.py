@@ -47,7 +47,11 @@ def _window_starts(analysis, regions, window_frames, hop_frames, n_frames):
         prev = -1e9
         for bf in downbeat_frames:
             if lo <= bf <= hi and bf - prev >= hop_frames:
-                starts.add(int(bf))
+                # Snap to the *nearest* frame, not the one below: a downbeat
+                # falling at 0.99 of a frame is a hair before the next frame,
+                # not a whole frame after the previous one. Truncating leaves
+                # up to a full frame of misalignment, rounding at most half.
+                starts.add(int(round(bf)))
                 prev = bf
     return sorted(starts)
 

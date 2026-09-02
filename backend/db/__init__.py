@@ -23,14 +23,16 @@ Layout
 ``dialect.py``  canonical-type and placeholder translation (SQLite/PostgreSQL)
 ``engine.py``   connections, transaction scoping, concurrency control
 ``catalog.py``  ``Database``/``Catalog`` — the interface above
+``status.py``   per-track ingestion state (pending/fetched/analyzed/ready)
 
 Swapping SQLite for Supabase is a URL change: set ``DJMIXER_DATABASE_URL`` to
 the Postgres connection string. See ``docs/database.md``.
 """
+from . import status
 from .catalog import Catalog, Database, DatabaseError
 from .engine import Engine, PostgresEngine, SQLiteEngine, engine_from_url
-from .models import (Latency, LatencySummaryRow, ListTrackSummariesRow, Track,
-                     Variant)
+from .models import (Latency, LatencySummaryRow, ListTrackStatusesRow,
+                     ListTrackSummariesRow, Track, Variant)
 from .queries import Queries
 
 __all__ = [
@@ -38,4 +40,5 @@ __all__ = [
     "Engine", "SQLiteEngine", "PostgresEngine", "engine_from_url",
     "Queries",
     "Track", "Variant", "Latency", "LatencySummaryRow", "ListTrackSummariesRow",
+    "ListTrackStatusesRow", "status",
 ]

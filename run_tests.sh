@@ -6,6 +6,9 @@
 #
 # Coverage map (which suite proves which testing-document item):
 #   docs/automation-test-manifest.md
+#
+# DJMIXER_LIVE_TESTS=1 additionally runs the tests that hit the live Jamendo
+# API (needs network + credentials in .env); they skip by default.
 set -e
 cd "$(dirname "$0")"
 

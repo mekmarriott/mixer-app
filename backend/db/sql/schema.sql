@@ -26,7 +26,19 @@ CREATE TABLE IF NOT EXISTS tracks (
     duration_s    REAL,
     audio_path    TEXT,
     analysis_json JSONDOC,
-    segments_json JSONDOC
+    segments_json JSONDOC,
+    -- Ingestion progress. `status` is a HIGH-WATER MARK of completed work
+    -- (pending -> fetched -> analyzed -> ready) so a rerun can skip every
+    -- stage already durably on disk. Failure lives in `status_error` rather
+    -- than in `status` on purpose: overwriting the mark with 'failed' would
+    -- lose the record of the download that did succeed, and the retry would
+    -- fetch the audio all over again.
+    status        TEXT NOT NULL DEFAULT 'pending',
+    status_error  TEXT,
+    source_url    TEXT,
+    fetched_at    REAL,
+    analyzed_at   REAL,
+    ready_at      REAL
 );
 
 CREATE TABLE IF NOT EXISTS variants (
@@ -50,3 +62,6 @@ CREATE TABLE IF NOT EXISTS latency (
 -- candidates are mixable tracks, narrowed by genre bucket and Camelot key.
 CREATE INDEX IF NOT EXISTS idx_tracks_match ON tracks (mixable, genre, camelot);
 CREATE INDEX IF NOT EXISTS idx_latency_stage ON latency (stage);
+
+-- Startup ingestion asks "what is not ready yet?" once per run.
+CREATE INDEX IF NOT EXISTS idx_tracks_status ON tracks (status);

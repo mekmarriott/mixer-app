@@ -1,14 +1,26 @@
 # Backend runtime dependencies.
 #
-#   python3 -m venv .venv && . .venv/bin/activate && pip install -r requirements.txt
+#   python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 #
-# Optional, auto-detected at import time and deliberately NOT pinned here:
-#   essentia    -> backend/analysis.py  (HAVE_ESSENTIA); AGPL-3.0, see docs/requirements.md §3
-#   rubberband  -> backend/stretch.py   (CLI on PATH);   GPL-2.0/commercial, same section
-# Both have real in-repo fallbacks, so the app runs without them. Installing
-# them is a licensing decision, not a setup step — keep them out of this file.
+# Also needed on PATH (not installable from PyPI):
+#   ffmpeg      -> backend/jamendo.py   decodes Jamendo MP3s   (brew install ffmpeg)
+#   rubberband  -> backend/stretch.py   time-stretch, R3 engine (brew install rubberband)
 
 Flask==3.1.0
 numpy==2.2.1
 scipy==1.15.0
 requests==2.32.3        # jamendo mode only (config/tracks.json "mode": "jamendo")
+
+# Production analysis engine (BPM / beat grid / key / frame features).
+#
+# AGPL-3.0 — installing it is a licensing decision as well as a setup step; see
+# docs/requirements.md §3. It is pinned rather than left floating because the
+# fallback is silent: 2.1b6.dev1389 is the newest release publishing macOS
+# arm64 + Linux x86_64 wheels for CPython 3.9-3.13, while the newer
+# 2.1b6.dev1438 ships cp314 wheels only, so an unpinned install quietly drops
+# to the numpy/scipy engine on every other interpreter and changes every
+# detected BPM and key. Set DJMIXER_REQUIRE_ESSENTIA=1 to make that loud.
+#
+# rubberband is a CLI, not a package, so it cannot be pinned here — the
+# equivalent guard is DJMIXER_REQUIRE_RUBBERBAND=1.
+essentia==2.1b6.dev1389

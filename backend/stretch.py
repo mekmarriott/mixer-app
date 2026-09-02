@@ -2,9 +2,17 @@
 
 Provider seam: uses the Rubber Band CLI when present (production path,
 highest quality, GPL/commercial licensed — see requirements.md §3). Fallback
-is an STFT phase vocoder (scipy) — adequate for the prototype and fully
-offline. ratio = target_bpm / native_bpm; output duration = input / ratio.
+is an STFT phase vocoder (scipy) — adequate as a bare-install stand-in.
+ratio = target_bpm / native_bpm; output duration = input / ratio.
+
+Variants are pre-rendered once at ingestion, never in the playback path, so
+this deliberately buys quality with CPU: the R3 engine (`-3`/`--fine`) rather
+than the CLI's backward-compatible R2 default.
+
+Set DJMIXER_REQUIRE_RUBBERBAND=1 to make a missing Rubber Band a hard error
+instead of a silent downgrade to the phase vocoder.
 """
+import os
 import shutil
 import subprocess
 import tempfile
@@ -18,6 +26,21 @@ from .audio_io import load_wav, save_wav
 
 RUBBERBAND = shutil.which("rubberband")
 
+# R3 ("--fine") is materially better on percussive material than the R2 engine
+# the CLI still defaults to for backward compatibility. -q keeps the per-track
+# progress bar out of ingestion logs.
+RUBBERBAND_ARGS = ["--fine", "-q"]
+
+
+def require_rubberband():
+    """True when the caller demanded the production stretch engine."""
+    return os.environ.get("DJMIXER_REQUIRE_RUBBERBAND", "").lower() in ("1", "true", "yes")
+
+
+if not RUBBERBAND and require_rubberband():   # pragma: no cover - install-dependent
+    raise RuntimeError(
+        "DJMIXER_REQUIRE_RUBBERBAND is set but the `rubberband` CLI is not on PATH")
+
 
 def stretch(samples, sr, ratio):
     """Return samples time-stretched so tempo scales by `ratio`, pitch preserved."""
@@ -28,13 +51,19 @@ def stretch(samples, sr, ratio):
     return _stretch_phase_vocoder(samples, sr, ratio)
 
 
-def _stretch_rubberband(samples, sr, ratio):  # pragma: no cover - CLI absent here
+def _stretch_rubberband(samples, sr, ratio):
     with tempfile.TemporaryDirectory() as td:
         src, dst = Path(td) / "in.wav", Path(td) / "out.wav"
         save_wav(src, samples, sr)
         # rubberband --time takes a duration multiplier (1/ratio for tempo ratio)
-        subprocess.run([RUBBERBAND, "--time", str(1.0 / ratio), str(src), str(dst)],
-                       check=True, capture_output=True)
+        proc = subprocess.run(
+            [RUBBERBAND, *RUBBERBAND_ARGS, "--time", str(1.0 / ratio),
+             str(src), str(dst)],
+            capture_output=True, text=True)
+        if proc.returncode != 0 or not dst.exists():
+            raise RuntimeError(
+                f"rubberband failed (exit {proc.returncode}) at ratio {ratio:.4f}: "
+                f"{proc.stderr.strip()[:400]}")
         out, _ = load_wav(dst)
         return out
 

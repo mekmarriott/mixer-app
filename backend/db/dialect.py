@@ -56,6 +56,48 @@ def render_ddl(schema_sql: str, dialect: str) -> str:
     return "\n".join(out)
 
 
+#: `    name  TYPE rest-of-declaration` inside a CREATE TABLE body.
+_COLUMN_RE = re.compile(
+    r"^\s{2,}(?P<name>[a-z_][a-z0-9_]*)\s+(?P<decl>.+?),?\s*$", re.I)
+_CREATE_TABLE_RE = re.compile(
+    r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?P<table>[a-z_][a-z0-9_]*)\s*\(",
+    re.I)
+#: Table-level constraints are not columns, whatever their indentation.
+_NOT_A_COLUMN = re.compile(
+    r"^(PRIMARY|FOREIGN|UNIQUE|CHECK|CONSTRAINT)\b", re.I)
+
+
+def declared_columns(schema_sql: str):
+    """``{table: {column: canonical declaration}}`` parsed from schema.sql.
+
+    Used by ``Engine.migrate`` to add columns that a live table predates.
+    Declarations keep their canonical type tokens, so the caller renders them
+    for its own dialect.
+    """
+    tables, table, depth = {}, None, 0
+    for raw in schema_sql.splitlines():
+        line = raw.partition("--")[0].rstrip()
+        if not line.strip():
+            continue
+        if table is None:
+            m = _CREATE_TABLE_RE.search(line)
+            if m:
+                table, depth = m.group("table"), 1
+                tables.setdefault(table, {})
+            continue
+        depth += line.count("(") - line.count(")")
+        m = _COLUMN_RE.match(line)
+        if m and not _NOT_A_COLUMN.match(m.group("name")):
+            decl = m.group("decl").rstrip(",").strip()
+            # A PRIMARY KEY / IDENTITY column cannot be added by ALTER TABLE
+            # anyway, and by definition predates any later column.
+            if not re.match(r"^(IDENTITY)\b", decl, re.I):
+                tables[table][m.group("name")] = decl
+        if depth <= 0:
+            table = None
+    return tables
+
+
 def _split_statements(sql: str):
     """Split on semicolons that terminate a statement.
 

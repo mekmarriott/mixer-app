@@ -4,6 +4,7 @@ config/tracks.json (see README).
 Endpoints
   GET /api/status                          warmup phase/progress + admission stats
   GET /api/health                          liveness (never gated)
+  GET /api/ingest                          per-track ingestion state (never gated)
   GET /api/deck                            zero-state: genres x N, waveforms inline
   GET /api/tracks                          catalog + attribution + flags
   GET /api/tracks/<id>                     analysis summary + segments
@@ -34,6 +35,7 @@ from . import config, dbguard, licensing, matching, transitions
 from . import warmup as warmup_mod
 from . import waveforms
 from .db import Database
+from .db import status as track_status
 from .db.catalog import grid_bpms_by_track
 from .timing import Timer
 
@@ -127,6 +129,29 @@ def create_app(run_ingestion=True, database=None, warmup_async=False):
     def health():
         return jsonify({"ok": True, "ready": warm.ready})
 
+    @app.get("/api/ingest")
+    def ingest_status():
+        """Per-track ingestion state. Not gated on warmup: this is precisely
+        what you want to read while the catalog is still being built, and
+        after a run that left some tracks incomplete.
+
+        `ready` means audio fetched, analysis cached and variants rendered.
+        Anything else is still in progress; `failed` carries the reason the
+        last attempt stopped, and the stage it stopped at is where the next
+        run resumes from.
+        """
+        cfg = config.load_tracks_config()
+        state = database.catalog.ingestion_state([t["id"] for t in cfg["tracks"]])
+        counts = {}
+        for entry in state:
+            counts[entry["status"]] = counts.get(entry["status"], 0) + 1
+        return jsonify({
+            "mode": cfg["mode"], "counts": counts,
+            "failed": sum(1 for entry in state if entry["failed"]),
+            "complete": all(entry["status"] == track_status.READY
+                            for entry in state),
+            "tracks": state})
+
     # ----------------------------------------------------------- zero state
     @app.get("/api/deck")
     @needs_catalog
@@ -147,7 +172,8 @@ def create_app(run_ingestion=True, database=None, warmup_async=False):
         with database.reading() as q:
             # Summaries omit the analysis/segment blobs, which this payload
             # does not use; grids come back in one query rather than per track.
-            summaries = q.list_track_summaries()
+            summaries = [t for t in q.list_track_summaries()
+                         if t.status == track_status.READY]   # never show a partial
             grids = grid_bpms_by_track(q)
         return jsonify([track_payload(t, grids) for t in summaries])
 

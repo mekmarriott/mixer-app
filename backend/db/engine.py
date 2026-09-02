@@ -82,14 +82,42 @@ class Engine:
 
     # -- public API --------------------------------------------------------
     def migrate(self):
-        """Apply schema.sql. Idempotent — every statement is IF NOT EXISTS."""
+        """Apply schema.sql. Idempotent — every statement is IF NOT EXISTS.
+
+        CREATE TABLE IF NOT EXISTS is a no-op on a table that already exists,
+        so a column added to schema.sql would never reach an existing catalog.
+        Missing columns are therefore added after the tables exist — and
+        *before* the indexes, since an index may be declared on a column the
+        live table has not got yet.
+        """
+        statements = list(dialect.ddl_statements(schema_sql(), self.dialect))
+        tables = [s for s in statements if "CREATE INDEX" not in s.upper()]
+        indexes = [s for s in statements if "CREATE INDEX" in s.upper()]
         with self.connection(write=True) as conn:
             cur = conn.cursor()
             try:
-                for stmt in dialect.ddl_statements(schema_sql(), self.dialect):
+                for stmt in tables:
+                    cur.execute(stmt)
+                self._add_missing_columns(cur)
+                for stmt in indexes:
                     cur.execute(stmt)
             finally:
                 cur.close()
+
+    def _add_missing_columns(self, cur):
+        for table, columns in dialect.declared_columns(schema_sql()).items():
+            try:
+                have = self._existing_columns(cur, table)
+            except Exception:                  # table absent; DDL will have made it
+                continue
+            for name, decl in columns.items():
+                if name in have:
+                    continue
+                rendered = dialect.render_ddl(decl, self.dialect)
+                cur.execute(f"ALTER TABLE {table} ADD COLUMN {name} {rendered}")
+
+    def _existing_columns(self, cur, table):
+        raise NotImplementedError
 
     @property
     def in_transaction(self):
@@ -167,6 +195,10 @@ class Engine:
 class SQLiteEngine(Engine):
     dialect = dialect.SQLITE
 
+    def _existing_columns(self, cur, table):
+        cur.execute(f"PRAGMA table_info({table})")
+        return {row[1] for row in cur.fetchall()}
+
     def __init__(self, path, busy_timeout_s=10.0):
         super().__init__()
         self.path = str(path)
@@ -217,6 +249,11 @@ class SQLiteEngine(Engine):
 
 class PostgresEngine(Engine):
     dialect = dialect.POSTGRES
+
+    def _existing_columns(self, cur, table):
+        cur.execute("SELECT column_name FROM information_schema.columns "
+                    "WHERE table_name = %s", (table,))
+        return {row[0] for row in cur.fetchall()}
 
     #: Supabase's transaction pooler. Session state (including server-side
     #: prepared statements) does not survive between transactions on it, so

@@ -111,9 +111,14 @@ class TestDialect(unittest.TestCase):
         self.assertIn("AUTOINCREMENT", sqlite_ddl)
 
     def test_semicolons_in_comments_do_not_split_statements(self):
-        statements = dialect.ddl_statements(engine_mod.schema_sql(), dialect.SQLITE)
-        self.assertEqual(sum(1 for s in statements if "CREATE TABLE" in s), 3)
-        self.assertEqual(sum(1 for s in statements if "CREATE INDEX" in s), 2)
+        """Counted against the schema itself rather than a literal, so adding
+        a table or index does not fail this test for the wrong reason."""
+        schema = engine_mod.schema_sql()
+        statements = dialect.ddl_statements(schema, dialect.SQLITE)
+        for kind in ("CREATE TABLE", "CREATE INDEX"):
+            self.assertEqual(sum(1 for s in statements if kind in s),
+                             schema.count(kind), kind)
+        self.assertGreaterEqual(sum(1 for s in statements if "CREATE TABLE" in s), 3)
 
     def test_both_dialects_produce_executable_ddl_for_sqlite(self):
         """Sanity check that the canonical schema really is valid SQL."""

@@ -20,8 +20,10 @@ opens its own without deadlocking or committing early.
 from __future__ import annotations
 
 import contextlib
+import time
 
 from . import engine as engine_mod
+from . import status as status_mod
 from .engine import DatabaseError                              # noqa: F401
 from .models import (Latency, LatencySummaryRow,               # noqa: F401
                      ListTrackSummariesRow, Track, Variant)
@@ -96,6 +98,10 @@ class Catalog:
         iterable of ``(grid_bpm, ratio, path, duration_s)``. One transaction, so
         a crash mid-render never leaves a track advertising variants that were
         not recorded.
+
+        Ingestion calls this more than once per track — after fetch, then again
+        after analysis — so fields the caller does not supply are left as they
+        are rather than blanked (the upsert COALESCEs them).
         """
         with self.db.writing() as q:
             q.upsert_track(
@@ -106,10 +112,75 @@ class Catalog:
                 camelot=row.get("camelot"), duration_s=row.get("duration_s"),
                 audio_path=row.get("audio_path"),
                 analysis_json=row.get("analysis"),
-                segments_json=row.get("segments"))
+                segments_json=row.get("segments"),
+                status=row.get("status", status_mod.PENDING),
+                status_error=row.get("status_error"),
+                source_url=row.get("source_url"),
+                fetched_at=row.get("fetched_at"),
+                analyzed_at=row.get("analyzed_at"),
+                ready_at=row.get("ready_at"))
             for grid_bpm, ratio, path, duration_s in variants:
                 q.upsert_variant(track_id=row["id"], grid_bpm=grid_bpm,
                                  ratio=ratio, path=path, duration_s=duration_s)
+
+    def advance_status(self, track_id, new_status, at=None):
+        """Move a track's high-water mark forward and clear any stale error.
+
+        Stamps the stage's timestamp in the same transaction, so a row can
+        never claim a stage it has no time for.
+        """
+        with self.db.writing() as q:
+            q.set_track_status(id=track_id, status=new_status)
+            stamp = status_mod.STAMP.get(new_status)
+            if stamp:
+                when = time.time() if at is None else at
+                getattr(q, f"stamp_track_{new_status}")(**{stamp: when,
+                                                           "id": track_id})
+
+    def mark_failed(self, track_id, error):
+        """Record why ingestion stopped, WITHOUT rewinding the high-water mark:
+        whatever was already fetched or analyzed stays valid for the retry."""
+        with self.db.writing() as q:
+            q.mark_track_failed(id=track_id, status_error=str(error))
+
+    def status_of(self, track_id):
+        with self.db.reading() as q:
+            return q.get_track_status(id=track_id) or status_mod.PENDING
+
+    def ingestion_state(self, configured_ids=None):
+        """Per-track ingestion state, including configured tracks never started.
+
+        Reports what the catalog endpoint must not: a track that is still
+        being fetched, and one that failed and why.
+        """
+        with self.db.reading() as q:
+            rows = {r.id: r for r in q.list_track_statuses()}
+            variant_counts = {}
+            for variant in q.list_all_variants():
+                variant_counts[variant.track_id] = \
+                    variant_counts.get(variant.track_id, 0) + 1
+
+        ids = [str(i) for i in configured_ids] if configured_ids is not None \
+            else list(rows)
+        out = []
+        for track_id in ids:
+            row = rows.get(track_id)
+            if row is None:
+                out.append({"id": track_id, "status": status_mod.PENDING,
+                            "error": None, "failed": False, "name": None,
+                            "artist": None, "mixable": False, "variants": 0,
+                            "fetched_at": None, "analyzed_at": None,
+                            "ready_at": None})
+                continue
+            out.append({
+                "id": row.id, "status": row.status, "error": row.status_error,
+                "failed": status_mod.is_failed(row), "name": row.name,
+                "artist": row.artist, "mixable": bool(row.mixable),
+                "variants": variant_counts.get(row.id, 0),
+                "fetched_at": row.fetched_at, "analyzed_at": row.analyzed_at,
+                "ready_at": row.ready_at,
+            })
+        return out
 
     def record_latency(self, stage, track_id, ms, at):
         with self.db.writing() as q:

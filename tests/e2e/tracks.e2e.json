@@ -1,0 +1,96 @@
+{
+  "mode": "offline",
+  "comment": "Catalog for the browser suite ONLY (playwright.config.mjs points DJMIXER_TRACKS here). Deliberately 'offline' mode: these are deterministically synthesized tracks, so the suite needs no network, no Jamendo credentials, and boots in seconds. It also guarantees the mixable/harmonic structure the mixing-flow specs rely on \u2014 the real config/tracks.json is a live Jamendo playlist that is ~90% ND-licensed and therefore mostly unmixable, which would leave these tests with no valid track pair to drag together.",
+  "tracks": [
+    {
+      "id": "1001",
+      "name": "Neon Corridor",
+      "artist": "Volt Array",
+      "genre": "house",
+      "bpm": 124,
+      "key": "8A",
+      "license": "CC BY 4.0",
+      "duration_s": 60
+    },
+    {
+      "id": "1002",
+      "name": "Glass Elevator",
+      "artist": "Mira Flux",
+      "genre": "house",
+      "bpm": 126,
+      "key": "7A",
+      "license": "CC BY-SA 4.0",
+      "duration_s": 60
+    },
+    {
+      "id": "1003",
+      "name": "Midnight Grid",
+      "artist": "Kestrel Motive",
+      "genre": "house",
+      "bpm": 122,
+      "key": "8B",
+      "license": "CC BY-NC 4.0",
+      "duration_s": 60
+    },
+    {
+      "id": "1004",
+      "name": "Sodium Bloom",
+      "artist": "Volt Array",
+      "genre": "house",
+      "bpm": 128,
+      "key": "5A",
+      "license": "CC BY 4.0",
+      "duration_s": 60
+    },
+    {
+      "id": "1005",
+      "name": "Locked Groove",
+      "artist": "Pale Circuit",
+      "genre": "house",
+      "bpm": 124,
+      "key": "8A",
+      "license": "CC BY-ND 4.0",
+      "duration_s": 60
+    },
+    {
+      "id": "2001",
+      "name": "Slow Ferry",
+      "artist": "Harbor Lights",
+      "genre": "downtempo",
+      "bpm": 90,
+      "key": "4A",
+      "license": "CC BY 4.0",
+      "duration_s": 60
+    },
+    {
+      "id": "2002",
+      "name": "Paper Lanterns",
+      "artist": "Osei Dunn",
+      "genre": "downtempo",
+      "bpm": 92,
+      "key": "5A",
+      "license": "CC BY-NC-SA 4.0",
+      "duration_s": 60
+    },
+    {
+      "id": "2003",
+      "name": "Low Orbit",
+      "artist": "Harbor Lights",
+      "genre": "downtempo",
+      "bpm": 89,
+      "key": "3A",
+      "license": "CC BY 4.0",
+      "duration_s": 60
+    },
+    {
+      "id": "2004",
+      "name": "Quiet Machinery",
+      "artist": "Tin Palace",
+      "genre": "downtempo",
+      "bpm": 94,
+      "key": "11A",
+      "license": "CC BY-NC-ND 4.0",
+      "duration_s": 60
+    }
+  ]
+}

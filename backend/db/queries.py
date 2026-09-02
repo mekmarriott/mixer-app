@@ -30,7 +30,7 @@ ORDER BY stage""",
     "ListMixableTracks": """SELECT * FROM tracks WHERE mixable = :mixable ORDER BY id""",
     "ListTrackSummaries": """SELECT id, name, artist, genre, license,
        license_nd, license_sa, license_nc,
-       mixable, native_bpm, camelot, duration_s
+       mixable, native_bpm, camelot, duration_s, status
 FROM tracks
 ORDER BY id""",
     "CountTracks": """SELECT COUNT(*) AS n FROM tracks""",
@@ -38,10 +38,14 @@ ORDER BY id""",
     "GetTrackSegments": """SELECT segments_json FROM tracks WHERE id = :id""",
     "UpsertTrack": """INSERT INTO tracks (id, name, artist, genre, license, license_nd, license_sa,
                     license_nc, mixable, native_bpm, camelot, duration_s,
-                    audio_path, analysis_json, segments_json)
+                    audio_path, analysis_json, segments_json,
+                    status, status_error, source_url,
+                    fetched_at, analyzed_at, ready_at)
 VALUES (:id, :name, :artist, :genre, :license, :license_nd, :license_sa,
         :license_nc, :mixable, :native_bpm, :camelot, :duration_s,
-        :audio_path, :analysis_json, :segments_json)
+        :audio_path, :analysis_json, :segments_json,
+        :status, :status_error, :source_url,
+        :fetched_at, :analyzed_at, :ready_at)
 ON CONFLICT (id) DO UPDATE SET
     name          = EXCLUDED.name,
     artist        = EXCLUDED.artist,
@@ -51,12 +55,29 @@ ON CONFLICT (id) DO UPDATE SET
     license_sa    = EXCLUDED.license_sa,
     license_nc    = EXCLUDED.license_nc,
     mixable       = EXCLUDED.mixable,
-    native_bpm    = EXCLUDED.native_bpm,
-    camelot       = EXCLUDED.camelot,
-    duration_s    = EXCLUDED.duration_s,
-    audio_path    = EXCLUDED.audio_path,
-    analysis_json = EXCLUDED.analysis_json,
-    segments_json = EXCLUDED.segments_json""",
+    native_bpm    = COALESCE(EXCLUDED.native_bpm, tracks.native_bpm),
+    camelot       = COALESCE(EXCLUDED.camelot, tracks.camelot),
+    duration_s    = COALESCE(EXCLUDED.duration_s, tracks.duration_s),
+    audio_path    = COALESCE(EXCLUDED.audio_path, tracks.audio_path),
+    analysis_json = COALESCE(EXCLUDED.analysis_json, tracks.analysis_json),
+    segments_json = COALESCE(EXCLUDED.segments_json, tracks.segments_json),
+    status        = EXCLUDED.status,
+    status_error  = EXCLUDED.status_error,
+    source_url    = COALESCE(EXCLUDED.source_url, tracks.source_url),
+    fetched_at    = COALESCE(EXCLUDED.fetched_at, tracks.fetched_at),
+    analyzed_at   = COALESCE(EXCLUDED.analyzed_at, tracks.analyzed_at),
+    ready_at      = COALESCE(EXCLUDED.ready_at, tracks.ready_at)""",
+    "ClearTrackAnalysis": """UPDATE tracks SET analysis_json = NULL, segments_json = NULL WHERE id = :id""",
+    "SetTrackStatus": """UPDATE tracks SET status = :status, status_error = NULL WHERE id = :id""",
+    "MarkTrackFailed": """UPDATE tracks SET status_error = :status_error WHERE id = :id""",
+    "StampTrackFetched": """UPDATE tracks SET fetched_at = :fetched_at WHERE id = :id""",
+    "StampTrackAnalyzed": """UPDATE tracks SET analyzed_at = :analyzed_at WHERE id = :id""",
+    "StampTrackReady": """UPDATE tracks SET ready_at = :ready_at WHERE id = :id""",
+    "GetTrackStatus": """SELECT status FROM tracks WHERE id = :id""",
+    "ListTrackStatuses": """SELECT id, name, artist, mixable, status, status_error,
+       fetched_at, analyzed_at, ready_at
+FROM tracks
+ORDER BY id""",
     "DeleteTrack": """DELETE FROM tracks WHERE id = :id""",
     "ListVariantsForTrack": """SELECT * FROM variants WHERE track_id = :track_id ORDER BY grid_bpm""",
     "ListAllVariants": """SELECT * FROM variants ORDER BY track_id, grid_bpm""",
@@ -177,7 +198,7 @@ class Queries:
         cur.close()
         return None if row is None else decode(row[0], "JSONDOC")
 
-    def upsert_track(self, id, name, artist, genre, license, license_nd, license_sa, license_nc, mixable, native_bpm, camelot, duration_s, audio_path, analysis_json, segments_json):
+    def upsert_track(self, id, name, artist, genre, license, license_nd, license_sa, license_nc, mixable, native_bpm, camelot, duration_s, audio_path, analysis_json, segments_json, status, status_error, source_url, fetched_at, analyzed_at, ready_at):
         """`UpsertTrack` (:exec) -> None"""
         params = {
             "id": encode(id, "TEXT", self._dialect),
@@ -195,9 +216,86 @@ class Queries:
             "audio_path": encode(audio_path, "TEXT", self._dialect),
             "analysis_json": encode(analysis_json, "JSONDOC", self._dialect),
             "segments_json": encode(segments_json, "JSONDOC", self._dialect),
+            "status": encode(status, "TEXT", self._dialect),
+            "status_error": encode(status_error, "TEXT", self._dialect),
+            "source_url": encode(source_url, "TEXT", self._dialect),
+            "fetched_at": encode(fetched_at, "REAL", self._dialect),
+            "analyzed_at": encode(analyzed_at, "REAL", self._dialect),
+            "ready_at": encode(ready_at, "REAL", self._dialect),
         }
         cur = self._execute("UpsertTrack", params)
         cur.close()
+
+    def clear_track_analysis(self, id):
+        """`ClearTrackAnalysis` (:exec) -> None"""
+        params = {
+            "id": encode(id, "TEXT", self._dialect),
+        }
+        cur = self._execute("ClearTrackAnalysis", params)
+        cur.close()
+
+    def set_track_status(self, status, id):
+        """`SetTrackStatus` (:exec) -> None"""
+        params = {
+            "status": encode(status, "TEXT", self._dialect),
+            "id": encode(id, "TEXT", self._dialect),
+        }
+        cur = self._execute("SetTrackStatus", params)
+        cur.close()
+
+    def mark_track_failed(self, status_error, id):
+        """`MarkTrackFailed` (:exec) -> None"""
+        params = {
+            "status_error": encode(status_error, "TEXT", self._dialect),
+            "id": encode(id, "TEXT", self._dialect),
+        }
+        cur = self._execute("MarkTrackFailed", params)
+        cur.close()
+
+    def stamp_track_fetched(self, fetched_at, id):
+        """`StampTrackFetched` (:exec) -> None"""
+        params = {
+            "fetched_at": encode(fetched_at, "REAL", self._dialect),
+            "id": encode(id, "TEXT", self._dialect),
+        }
+        cur = self._execute("StampTrackFetched", params)
+        cur.close()
+
+    def stamp_track_analyzed(self, analyzed_at, id):
+        """`StampTrackAnalyzed` (:exec) -> None"""
+        params = {
+            "analyzed_at": encode(analyzed_at, "REAL", self._dialect),
+            "id": encode(id, "TEXT", self._dialect),
+        }
+        cur = self._execute("StampTrackAnalyzed", params)
+        cur.close()
+
+    def stamp_track_ready(self, ready_at, id):
+        """`StampTrackReady` (:exec) -> None"""
+        params = {
+            "ready_at": encode(ready_at, "REAL", self._dialect),
+            "id": encode(id, "TEXT", self._dialect),
+        }
+        cur = self._execute("StampTrackReady", params)
+        cur.close()
+
+    def get_track_status(self, id):
+        """`GetTrackStatus` (:scalar) -> str | None"""
+        params = {
+            "id": encode(id, "TEXT", self._dialect),
+        }
+        cur = self._execute("GetTrackStatus", params)
+        row = cur.fetchone()
+        cur.close()
+        return None if row is None else decode(row[0], "TEXT")
+
+    def list_track_statuses(self):
+        """`ListTrackStatuses` (:many) -> list[ListTrackStatusesRow]"""
+        params = {}
+        cur = self._execute("ListTrackStatuses", params)
+        rows = cur.fetchall()
+        cur.close()
+        return [models.ListTrackStatusesRow._from_row(r) for r in rows]
 
     def delete_track(self, id):
         """`DeleteTrack` (:exec) -> None"""

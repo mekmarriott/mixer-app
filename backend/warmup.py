@@ -11,6 +11,7 @@ import threading
 import time
 
 from . import config, deck, ingest, licensing
+from .db import status as db_status
 from .timing import Timer
 
 # Phases, in order. Everything except `ready` and `failed` is transient.
@@ -83,29 +84,49 @@ class Warmup:
 
     # ------------------------------------------------------------- phase 1
     def _ingest(self):
-        with self.database.reading() as q:
-            existing = q.count_tracks()
-        if existing:
-            self._set(message=f"Catalog cached ({existing} tracks)")
-            return
+        """Ingest whatever is not already done.
 
+        Resumable rather than all-or-nothing: a track at `ready` costs no
+        request and is counted as done immediately, so a restart with a full
+        catalog still finishes in milliseconds, while a catalog left half
+        ingested by an interrupted run resumes from where it stopped instead
+        of re-downloading everything.
+
+        One track failing does not abort warmup — the rest of the catalog is
+        still worth serving, and the failures are reported in the phase
+        message and by GET /api/ingest.
+        """
         cfg = config.load_tracks_config()
         entries = cfg["tracks"]
+        catalog = self.database.catalog
         self._set(phase=INGESTING, total=len(entries), done=0,
                   message=f"Ingesting {len(entries)} tracks")
         config.ensure_dirs()
 
         timer = Timer(self.database)
+        failures = []
         for i, entry in enumerate(entries, 1):
+            tid = str(entry["id"])
+            if catalog.status_of(tid) == db_status.READY:
+                self._set(done=i)
+                continue
             self._set(message=f"Analyzing {entry.get('name', entry['id'])}"
                               f" ({i}/{len(entries)})")
-            ingest.ingest_track(self.database, entry, cfg["mode"], timer)
+            try:
+                ingest.ingest_track(self.database, entry, cfg["mode"], timer)
+            except Exception as exc:
+                failures.append(f"{tid}: {type(exc).__name__}: {exc}")
             self._set(done=i)
+
+        if failures:
+            self._set(message=f"{len(failures)} track(s) incomplete "
+                              f"(see /api/ingest); serving the rest")
 
     # ------------------------------------------------------------- phase 2
     def _precompute(self):
         with self.database.reading() as q:
-            summaries = q.list_track_summaries()
+            summaries = [t for t in q.list_track_summaries()
+                         if t.status == db_status.READY]
 
         self._set(phase=PRECOMPUTING, total=len(summaries), done=0,
                   message=f"Precomputing waveforms for {len(summaries)} tracks")

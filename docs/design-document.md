@@ -9,19 +9,43 @@ algorithm and UI calls — and why each was made.
 
 ---
 
-## 1. Provider seams: the environment has no network
+## 1. Provider seams (originally: the environment had no network)
 
-The dev/test server has **no outbound network**. That rules out, at build
-time: the live Jamendo API, installing Essentia (AGPL C++ build), installing
-Rubber Band, npm packages, CDN assets, and webfonts. Rather than stub the
-system into fiction, every third-party dependency became a **provider seam**
-with a real fallback implementation that honors the same contract:
+This design was written when the dev/test server had **no outbound network**,
+which ruled out at build time: the live Jamendo API, installing Essentia
+(AGPL C++ build), installing Rubber Band, npm packages, CDN assets, and
+webfonts. Rather than stub the system into fiction, every third-party
+dependency became a **provider seam** with a real fallback implementation
+honoring the same contract.
 
-| Planned dependency | Seam | Fallback used here | Swap trigger |
+**All three seams now run on the real dependency.** The fallbacks remain, so
+the pipeline still works on a bare install, but they are no longer the
+default path:
+
+| Dependency | Seam | Production engine | Fallback if absent |
 |---|---|---|---|
-| Jamendo API | `backend/jamendo.py fetch_track(entry, mode)` | `offline` mode: deterministic synthesized tracks from `config/tracks.json` | `"mode": "jamendo"` + `JAMENDO_CLIENT_ID` env |
-| Essentia | `backend/analysis.py` (`HAVE_ESSENTIA` flag) | numpy/scipy DSP implementing the same output contract (BPM, beat grid, key, frames, prefix sums) | `import essentia` succeeding |
-| Rubber Band | `backend/stretch.py` | STFT phase vocoder (scipy) | `rubberband` CLI on `PATH` (auto-detected) |
+| Jamendo API | `backend/jamendo.py fetch_track(entry, mode)` | live API v3.0, credentials from `.env` | `offline` mode: deterministic synthesized tracks |
+| Essentia | `backend/analysis.py` | `RhythmExtractor2013` (BPM/beats), `KeyExtractor` (edma), `Spectrum`/`RMS`/`Flux` (frames) | numpy/scipy DSP, same output contract |
+| Rubber Band | `backend/stretch.py` | `rubberband --fine` (R3 engine) CLI | STFT phase vocoder (scipy) |
+
+Because a fallback is a *different engine* rather than a slower one, a silent
+downgrade in production would quietly change every detected BPM and key.
+Three things guard that: `analysis.engine` is recorded on every stored
+analysis (so the engine that actually ran is auditable after the fact),
+`engine_name()` reports it live, and `DJMIXER_REQUIRE_ESSENTIA` /
+`DJMIXER_REQUIRE_RUBBERBAND` turn a missing dependency into a startup
+failure. The previous code reported `engine: "essentia"` whenever the package
+merely *imported*, while numpy/scipy did all the work — the failure mode this
+now prevents.
+
+One integration detail worth recording, because it is invisible and
+consequential: Essentia's rhythm extractors assume **44.1 kHz** and several
+(including `RhythmExtractor2013`) expose no `sampleRate` parameter at all.
+Feeding them the pipeline's 22.05 kHz masters directly makes them read the
+audio as half-length and double-tempo, which put every detected BPM an octave
+out and truncated the beat grid to the first half of each track.
+`analysis.py` therefore resamples to `ANALYSIS_SR` before analysis, while
+storage and variants stay at `config.SAMPLE_RATE`.
 
 Two properties were non-negotiable for the fallbacks:
 
@@ -74,18 +98,34 @@ chord pads, and a tonic+third drone. Design intent:
   (20–150 Hz / total) with cumulative-sum arrays; `window_mean` is two array
   reads regardless of window size (asserted structurally in P1-04).
 
-Real Essentia would replace the detectors; the frame/prefix layout and every
-downstream consumer stay unchanged.
+Essentia now replaces these detectors by default (`RhythmExtractor2013`
+multifeature for BPM and the beat grid, `KeyExtractor` with the `edma`
+profile for key, `Spectrum`/`RMS`/`Flux` for frames). The frame/prefix layout
+and every downstream consumer are unchanged — that was the point of pinning
+the contract first. Two differences are worth knowing:
 
-## 4. Time-stretch fallback
+- The beat grid is now **real tracked beat times**, not an arithmetic
+  sequence from a single phase estimate, so spacing varies slightly across a
+  track. `transitions._window_starts` snaps candidate starts to the nearest
+  frame rather than truncating, which the uniform grid had masked.
+- `edma` is chosen over `temperley`/`krumhansl` because it was trained on
+  electronic dance music, which is what this catalog is. On the fixture
+  ground truth `edma`, `krumhansl` and `bgate` all score 9/9 while
+  `temperley` scores 7/9.
 
-Classic STFT phase vocoder (2048/512, Hann): magnitude interpolation at
-resampled frame positions, phase accumulated by per-bin instantaneous
-frequency. Adequate quality for a prototype and fully offline; Rubber Band's
-formant-preserving transient handling is the production upgrade, used
-automatically when its CLI is present. The stretch cap (±10%) and the
-grid-variant plan come from the project plan and are enforced upstream of
-this module either way.
+## 4. Time-stretch
+
+Rubber Band's R3 engine (`--fine`) is the production path, invoked per
+variant at ingestion. The CLI still defaults to the older R2 engine for
+backward compatibility, so `--fine` is passed explicitly: variants are
+pre-rendered once and never touched in the playback path, which is exactly
+the case where buying quality with CPU is free.
+
+The fallback is a classic STFT phase vocoder (2048/512, Hann): magnitude
+interpolation at resampled frame positions, phase accumulated by per-bin
+instantaneous frequency. Adequate for a prototype and fully offline. The
+stretch cap (±10%) and the grid-variant plan come from the project plan and
+are enforced upstream of this module either way.
 
 ## 5. Audio format: WAV, 22.05 kHz, mono
 
