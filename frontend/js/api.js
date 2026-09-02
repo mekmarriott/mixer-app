@@ -14,8 +14,22 @@ async function sendJSON(method, url, body) {
   return r.status === 204 ? null : r.json();
 }
 
-async function getJSON(url) {
-  const r = await fetch(url);
+// `timeoutMs` bounds how long a caller will wait before treating the request
+// as failed. The server's own ceiling is the function timeout, so without this
+// a slow endpoint stalls whatever is waiting on it for the full 30 seconds —
+// long enough that a boot which recovers correctly still looks hung.
+async function getJSON(url, { timeoutMs = 0 } = {}) {
+  const ctl = timeoutMs ? new AbortController() : null;
+  const timer = ctl ? setTimeout(() => ctl.abort(), timeoutMs) : null;
+  let r;
+  try {
+    r = await fetch(url, ctl ? { signal: ctl.signal } : undefined);
+  } catch (e) {
+    if (ctl && ctl.signal.aborted) throw new Error(`${url}: timed out after ${timeoutMs}ms`);
+    throw e;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
   if (!r.ok) {
     // 503 means the catalog is still warming; carry the status payload so the
     // caller can show progress instead of a generic failure.
@@ -38,7 +52,8 @@ export const api = {
   track: (id) => getJSON(`/api/tracks/${id}`),
   waveform: (id, bpm, points = 480) =>
     getJSON(`/api/tracks/${id}/waveform?points=${points}${bpm ? `&bpm=${bpm}` : ""}`),
-  recommendations: (id) => getJSON(`/api/tracks/${id}/recommendations`),
+  recommendations: (id) =>
+    getJSON(`/api/tracks/${id}/recommendations`, { timeoutMs: 8000 }),
   transitions: (a, b) => getJSON(`/api/transitions?a=${a}&b=${b}`),
   credits: () => getJSON("/api/credits"),
 
