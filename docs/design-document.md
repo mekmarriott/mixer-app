@@ -285,6 +285,40 @@ and falls back to a per-genre deterministic shuffle, so the view is stable
 across restarts without being alphabetical. Nothing stores popularity yet (see
 the manifest's "Not yet covered"); the code path is live and dormant.
 
+## 8b. Saved mixes
+
+**What is stored is ordering plus one gap per track — nothing else.** The audio
+is already rendered and the analysis already cached, so a mix is fully described
+by which tracks, in what order, with what spacing. That is why persisting on a
+drag is affordable at all.
+
+**`mix_tracks` is a linked list.** `next_id` means an insert or delete in the
+middle of a 100-track mix repoints one row instead of renumbering every row
+after it. The cost, stated plainly: ordering cannot be expressed in SQL, so a
+mix is read whole and walked in Python, and the walk has to guard against cycles
+and orphans (it does — `MIX-01`). At 100 nodes a `position` column with
+renumbering would also have been viable; the linked list wins on write
+amplification, not on read simplicity.
+
+**`delta_beats` is an integer, not seconds.** It is the gap from the *previous*
+track's start, in whole beats at that node's `grid_bpm`. Relative, so a ripple
+edit rewrites one row and the rest of the chain moves with it. Integral, so an
+off-grid placement is not representable — beat alignment becomes a property of
+the schema rather than a rule the UI is trusted to apply. Seconds are derived:
+`delta_beats * 60 / grid_bpm`.
+
+**At most two tracks may overlap**, checked on every write path
+(`check_overlaps`). A track reaching its second-nearest neighbour would put
+three on the grid at once, which both the crossfade model and the playback
+engine assume cannot happen. The browser clamps the drag to the same bound so
+the gesture stops rather than producing a state the API would reject with a 409.
+
+**A drag persists, but coalesces.** The write is one row and one column, so the
+cost is real but tiny. What is not tiny is issuing it on every `pointermove` —
+those fire around 60 times a second for a gesture whose entire outcome is a
+single integer. The client debounces during the drag and flushes on release, so
+a gesture costs one or two writes rather than a hundred.
+
 ## 9. Visual design
 
 The mockup PDF is a colorless sketch except for the mandated track colors

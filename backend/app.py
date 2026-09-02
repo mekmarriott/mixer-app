@@ -6,6 +6,13 @@ Endpoints
   GET /api/health                          liveness (never gated)
   GET /api/ingest                          per-track ingestion state (never gated)
   GET /api/deck                            zero-state: genres x N, waveforms inline
+  GET    /api/mixes                        saved mixes, most recently edited first
+  POST   /api/mixes                        create an (empty) mix
+  GET    /api/mixes/<id>                   one mix with its ordered track chain
+  PATCH  /api/mixes/<id>                   rename
+  DELETE /api/mixes/<id>                   delete a mix and its chain
+  PUT    /api/mixes/<id>/tracks            replace the chain (structural edits)
+  PATCH  /api/mixes/<id>/tracks/<node>     move ONE track (the drag write)
   GET /api/tracks                          catalog + attribution + flags
   GET /api/tracks/<id>                     analysis summary + segments
   GET /api/tracks/<id>/waveform?bpm=&points=   cached envelope
@@ -31,7 +38,8 @@ from functools import wraps
 from flask import (Flask, abort, jsonify, redirect, request, send_file,
                    send_from_directory)
 
-from . import config, dbguard, licensing, matching, storage, transitions
+from . import (config, dbguard, licensing, matching, mixes as mixes_mod,
+               storage, transitions)
 from . import warmup as warmup_mod
 from . import waveforms
 from .db import Database
@@ -59,10 +67,11 @@ def create_app(run_ingestion=True, database=None, warmup_async=False):
     database = base if isinstance(base, dbguard.BoundedDatabase) \
         else dbguard.BoundedDatabase(base)
 
+    repo = mixes_mod.MixRepository(database)
     cache = waveforms.WaveformCache()
     warm = warmup_mod.Warmup(database, cache)
     app.config.update(DATABASE=database, WAVEFORMS=cache, WARMUP=warm,
-                      BLOB_STORE=store)
+                      BLOB_STORE=store, MIXES=repo)
 
     if warmup_async:
         warm.start_async(run_ingestion=run_ingestion)
@@ -92,6 +101,22 @@ def create_app(run_ingestion=True, database=None, warmup_async=False):
                 return resp
             return fn(*a, **kw)
         return wrapper
+
+    def track_durations(grid_only=False):
+        """track_id -> duration at its native tempo.
+
+        Mixed tracks play a grid variant whose duration differs from native by
+        the stretch ratio; the chain stores `grid_bpm` per node, so the client
+        rescales. The server needs only a consistent basis for the overlap
+        check, and native is the one every track has.
+        """
+        with database.reading() as q:
+            return {t.id: (t.duration_s or 0.0) for t in q.list_track_summaries()}
+
+    def mix_error(exc, code=409):
+        resp = jsonify({"error": "invalid_chain", "detail": str(exc)})
+        resp.status_code = code
+        return resp
 
     def track_payload(t, grids=None, wf_points=None):
         """`t` is a db.Track or the blob-free db.ListTrackSummariesRow."""
@@ -169,6 +194,75 @@ def create_app(run_ingestion=True, database=None, warmup_async=False):
         """
         return jsonify({"groups": warm.deck,
                         "per_genre": config.DECK_TRACKS_PER_GENRE})
+
+    # -------------------------------------------------------------- mixes
+    @app.get("/api/mixes")
+    @needs_catalog
+    def list_mixes():
+        return jsonify(repo.list())
+
+    @app.post("/api/mixes")
+    @needs_catalog
+    def create_mix():
+        body = request.get_json(silent=True) or {}
+        name = (body.get("name") or "Untitled Mix").strip() or "Untitled Mix"
+        return jsonify(repo.create(name=name)), 201
+
+    @app.get("/api/mixes/<mid>")
+    @needs_catalog
+    def get_mix(mid):
+        try:
+            mix = repo.get(mid, track_durations())
+        except mixes_mod.ChainError as exc:
+            return mix_error(exc, 500)      # stored data is corrupt, not the request
+        if mix is None:
+            abort(404)
+        return jsonify(mix)
+
+    @app.patch("/api/mixes/<mid>")
+    @needs_catalog
+    def rename_mix(mid):
+        body = request.get_json(silent=True) or {}
+        name = (body.get("name") or "").strip()
+        if not name:
+            abort(400, "name is required")
+        repo.rename(mid, name)
+        return jsonify({"id": mid, "name": name})
+
+    @app.delete("/api/mixes/<mid>")
+    @needs_catalog
+    def delete_mix(mid):
+        repo.delete(mid)
+        return "", 204
+
+    @app.put("/api/mixes/<mid>/tracks")
+    @needs_catalog
+    def replace_mix_tracks(mid):
+        """Structural edit: append, insert, delete or reorder. The client sends
+        the resulting chain; the server validates and writes it atomically."""
+        body = request.get_json(silent=True) or {}
+        try:
+            repo.replace_chain(mid, body.get("tracks") or [], track_durations())
+        except mixes_mod.ChainError as exc:
+            return mix_error(exc)
+        return jsonify(repo.get(mid, track_durations()))
+
+    @app.patch("/api/mixes/<mid>/tracks/<node>")
+    @needs_catalog
+    def move_mix_track(mid, node):
+        """The drag write: one row, one column. Cheap by construction, which is
+        why a drag can afford to persist at all."""
+        body = request.get_json(silent=True) or {}
+        if "delta_beats" not in body:
+            abort(400, "delta_beats is required")
+        try:
+            entry = repo.set_delta(mid, node, int(body["delta_beats"]),
+                                   track_durations())
+        except mixes_mod.ChainError as exc:
+            return mix_error(exc)
+        if entry is None:
+            abort(404)
+        return jsonify(entry)
 
     # ---------------------------------------------------------------- api
     @app.get("/api/tracks")

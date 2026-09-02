@@ -25,6 +25,32 @@ VALUES (:stage, :track_id, :ms, :at)""",
 FROM latency
 GROUP BY stage
 ORDER BY stage""",
+    "ListMixes": """SELECT * FROM mixes ORDER BY updated_at DESC""",
+    "GetMix": """SELECT * FROM mixes WHERE id = :id""",
+    "CountMixes": """SELECT COUNT(*) AS n FROM mixes""",
+    "UpsertMix": """INSERT INTO mixes (id, name, head_id, created_at, updated_at)
+VALUES (:id, :name, :head_id, :created_at, :updated_at)
+ON CONFLICT (id) DO UPDATE SET
+    name       = EXCLUDED.name,
+    head_id    = EXCLUDED.head_id,
+    updated_at = EXCLUDED.updated_at""",
+    "RenameMix": """UPDATE mixes SET name = :name, updated_at = :updated_at WHERE id = :id""",
+    "SetMixHead": """UPDATE mixes SET head_id = :head_id, updated_at = :updated_at WHERE id = :id""",
+    "TouchMix": """UPDATE mixes SET updated_at = :updated_at WHERE id = :id""",
+    "DeleteMix": """DELETE FROM mixes WHERE id = :id""",
+    "ListMixTracks": """SELECT * FROM mix_tracks WHERE mix_id = :mix_id""",
+    "GetMixTrack": """SELECT * FROM mix_tracks WHERE id = :id""",
+    "UpsertMixTrack": """INSERT INTO mix_tracks (id, mix_id, track_id, next_id, delta_beats, grid_bpm)
+VALUES (:id, :mix_id, :track_id, :next_id, :delta_beats, :grid_bpm)
+ON CONFLICT (id) DO UPDATE SET
+    track_id    = EXCLUDED.track_id,
+    next_id     = EXCLUDED.next_id,
+    delta_beats = EXCLUDED.delta_beats,
+    grid_bpm    = EXCLUDED.grid_bpm""",
+    "SetMixTrackDelta": """UPDATE mix_tracks SET delta_beats = :delta_beats WHERE id = :id""",
+    "SetMixTrackNext": """UPDATE mix_tracks SET next_id = :next_id WHERE id = :id""",
+    "DeleteMixTrack": """DELETE FROM mix_tracks WHERE id = :id""",
+    "DeleteMixTracksForMix": """DELETE FROM mix_tracks WHERE mix_id = :mix_id""",
     "GetTrack": """SELECT * FROM tracks WHERE id = :id""",
     "ListTracks": """SELECT * FROM tracks ORDER BY id""",
     "ListMixableTracks": """SELECT * FROM tracks WHERE mixable = :mixable ORDER BY id""",
@@ -133,6 +159,148 @@ class Queries:
         rows = cur.fetchall()
         cur.close()
         return [models.LatencySummaryRow._from_row(r) for r in rows]
+
+    def list_mixes(self):
+        """`ListMixes` (:many) -> list[Mix]"""
+        params = {}
+        cur = self._execute("ListMixes", params)
+        rows = cur.fetchall()
+        cur.close()
+        return [models.Mix._from_row(r) for r in rows]
+
+    def get_mix(self, id):
+        """`GetMix` (:one) -> Mix | None"""
+        params = {
+            "id": encode(id, "TEXT", self._dialect),
+        }
+        cur = self._execute("GetMix", params)
+        row = cur.fetchone()
+        cur.close()
+        return None if row is None else models.Mix._from_row(row)
+
+    def count_mixes(self):
+        """`CountMixes` (:scalar) -> int | None"""
+        params = {}
+        cur = self._execute("CountMixes", params)
+        row = cur.fetchone()
+        cur.close()
+        return None if row is None else decode(row[0], "INTEGER")
+
+    def upsert_mix(self, id, name, head_id, created_at, updated_at):
+        """`UpsertMix` (:exec) -> None"""
+        params = {
+            "id": encode(id, "TEXT", self._dialect),
+            "name": encode(name, "TEXT", self._dialect),
+            "head_id": encode(head_id, "TEXT", self._dialect),
+            "created_at": encode(created_at, "REAL", self._dialect),
+            "updated_at": encode(updated_at, "REAL", self._dialect),
+        }
+        cur = self._execute("UpsertMix", params)
+        cur.close()
+
+    def rename_mix(self, name, updated_at, id):
+        """`RenameMix` (:exec) -> None"""
+        params = {
+            "name": encode(name, "TEXT", self._dialect),
+            "updated_at": encode(updated_at, "REAL", self._dialect),
+            "id": encode(id, "TEXT", self._dialect),
+        }
+        cur = self._execute("RenameMix", params)
+        cur.close()
+
+    def set_mix_head(self, head_id, updated_at, id):
+        """`SetMixHead` (:exec) -> None"""
+        params = {
+            "head_id": encode(head_id, "TEXT", self._dialect),
+            "updated_at": encode(updated_at, "REAL", self._dialect),
+            "id": encode(id, "TEXT", self._dialect),
+        }
+        cur = self._execute("SetMixHead", params)
+        cur.close()
+
+    def touch_mix(self, updated_at, id):
+        """`TouchMix` (:exec) -> None"""
+        params = {
+            "updated_at": encode(updated_at, "REAL", self._dialect),
+            "id": encode(id, "TEXT", self._dialect),
+        }
+        cur = self._execute("TouchMix", params)
+        cur.close()
+
+    def delete_mix(self, id):
+        """`DeleteMix` (:exec) -> None"""
+        params = {
+            "id": encode(id, "TEXT", self._dialect),
+        }
+        cur = self._execute("DeleteMix", params)
+        cur.close()
+
+    def list_mix_tracks(self, mix_id):
+        """`ListMixTracks` (:many) -> list[MixTrack]"""
+        params = {
+            "mix_id": encode(mix_id, "TEXT", self._dialect),
+        }
+        cur = self._execute("ListMixTracks", params)
+        rows = cur.fetchall()
+        cur.close()
+        return [models.MixTrack._from_row(r) for r in rows]
+
+    def get_mix_track(self, id):
+        """`GetMixTrack` (:one) -> MixTrack | None"""
+        params = {
+            "id": encode(id, "TEXT", self._dialect),
+        }
+        cur = self._execute("GetMixTrack", params)
+        row = cur.fetchone()
+        cur.close()
+        return None if row is None else models.MixTrack._from_row(row)
+
+    def upsert_mix_track(self, id, mix_id, track_id, next_id, delta_beats, grid_bpm):
+        """`UpsertMixTrack` (:exec) -> None"""
+        params = {
+            "id": encode(id, "TEXT", self._dialect),
+            "mix_id": encode(mix_id, "TEXT", self._dialect),
+            "track_id": encode(track_id, "TEXT", self._dialect),
+            "next_id": encode(next_id, "TEXT", self._dialect),
+            "delta_beats": encode(delta_beats, "INTEGER", self._dialect),
+            "grid_bpm": encode(grid_bpm, "INTEGER", self._dialect),
+        }
+        cur = self._execute("UpsertMixTrack", params)
+        cur.close()
+
+    def set_mix_track_delta(self, delta_beats, id):
+        """`SetMixTrackDelta` (:exec) -> None"""
+        params = {
+            "delta_beats": encode(delta_beats, "INTEGER", self._dialect),
+            "id": encode(id, "TEXT", self._dialect),
+        }
+        cur = self._execute("SetMixTrackDelta", params)
+        cur.close()
+
+    def set_mix_track_next(self, next_id, id):
+        """`SetMixTrackNext` (:exec) -> None"""
+        params = {
+            "next_id": encode(next_id, "TEXT", self._dialect),
+            "id": encode(id, "TEXT", self._dialect),
+        }
+        cur = self._execute("SetMixTrackNext", params)
+        cur.close()
+
+    def delete_mix_track(self, id):
+        """`DeleteMixTrack` (:exec) -> None"""
+        params = {
+            "id": encode(id, "TEXT", self._dialect),
+        }
+        cur = self._execute("DeleteMixTrack", params)
+        cur.close()
+
+    def delete_mix_tracks_for_mix(self, mix_id):
+        """`DeleteMixTracksForMix` (:exec) -> None"""
+        params = {
+            "mix_id": encode(mix_id, "TEXT", self._dialect),
+        }
+        cur = self._execute("DeleteMixTracksForMix", params)
+        cur.close()
 
     def get_track(self, id):
         """`GetTrack` (:one) -> Track | None"""

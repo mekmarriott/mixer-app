@@ -97,6 +97,49 @@ class Latency:
 
 
 @dataclasses.dataclass(frozen=True)
+class Mix:
+    """One row of the `mixes` table."""
+
+    id: str
+    name: str
+    head_id: str
+    created_at: float
+    updated_at: float
+
+    _FIELDS = (
+        ("id", "TEXT"), ("name", "TEXT"), ("head_id", "TEXT"), ("created_at", "REAL"),
+        ("updated_at", "REAL"),
+    )
+
+    @classmethod
+    def _from_row(cls, row):
+        return cls(*(decode(row[i], t)
+                     for i, (_, t) in enumerate(cls._FIELDS)))
+
+
+@dataclasses.dataclass(frozen=True)
+class MixTrack:
+    """One row of the `mix_tracks` table."""
+
+    id: str
+    mix_id: str
+    track_id: str
+    next_id: str
+    delta_beats: int
+    grid_bpm: int
+
+    _FIELDS = (
+        ("id", "TEXT"), ("mix_id", "TEXT"), ("track_id", "TEXT"), ("next_id", "TEXT"),
+        ("delta_beats", "INTEGER"), ("grid_bpm", "INTEGER"),
+    )
+
+    @classmethod
+    def _from_row(cls, row):
+        return cls(*(decode(row[i], t)
+                     for i, (_, t) in enumerate(cls._FIELDS)))
+
+
+@dataclasses.dataclass(frozen=True)
 class LatencySummaryRow:
     """Result row of the LatencySummary query."""
 
@@ -174,4 +217,4 @@ class ListTrackStatusesRow:
                      for i, (_, t) in enumerate(cls._FIELDS)))
 
 
-__all__ = ["Track", "Variant", "Latency", "LatencySummaryRow", "ListTrackSummariesRow", "ListTrackStatusesRow"]
+__all__ = ["Track", "Variant", "Latency", "Mix", "MixTrack", "LatencySummaryRow", "ListTrackSummariesRow", "ListTrackStatusesRow"]

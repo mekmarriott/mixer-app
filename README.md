@@ -96,6 +96,10 @@ license is read from the API and every variant (BY / -SA / -NC / -ND /
    it to jump. Click the timeline to seek; ▶ plays the mix with an
    equal-power crossfade.
 5. Footer: per-track CC attribution links + open-source credits.
+6. Mixes save themselves. The picker in the top bar lists saved mixes
+   (most recently edited first); `+ New mix` returns to the zero state.
+   Selecting a mix with tracks resumes it — the deck shows what to play next,
+   ranked against the last track, rather than the browse view.
 
 ## Tests
 
@@ -166,7 +170,8 @@ backend/            Flask API + pipeline
   dbpool.py         bounded connection pool + admission semaphore
   warmup.py         background ingestion, waveform precompute, readiness
   waveforms.py      envelope computation + startup cache
-  catalog.py        zero-state deck (genres x N, popularity-aware)
+  deck.py           zero-state deck (genres x N, popularity-aware)
+  mixes.py          saved mixes: chain walk, ripple edits, overlap invariant
   ingest.py         fetch → gate → analyze → segment → variants
   jamendo.py        track source (jamendo | offline provider seam)
   synth.py          deterministic fixture-track synthesizer

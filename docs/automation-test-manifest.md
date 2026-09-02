@@ -17,9 +17,9 @@ grep -rhoE "P[1-4]-[0-9]{2}" tests/ | sort -u
 
 | Suite | Runner | Count | Runs in | What it is for |
 |---|---|---|---|---|
-| **Backend** | `unittest` (stdlib) | 84 | ~8 s | Pipeline, compliance gates, API contract, startup precompute and DB concurrency. Builds a real 5-track fixture catalog through one full ingestion. |
+| **Backend** | `unittest` (stdlib) | 128 | ~8 s | Pipeline, compliance gates, API contract, startup precompute and DB concurrency. Builds a real 5-track fixture catalog through one full ingestion. |
 | **Frontend logic** | `node:test` (stdlib) | 66 | <1 s | The pure interaction modules (`state`, `align`, `crossfade`, `navbar`, `deck`, `attribution`, `boot`) — no DOM, no WebAudio. |
-| **Browser** | Playwright + Chromium | 19 | ~25 s | What the other two structurally cannot reach: native drag-and-drop, canvas pixels, the WebAudio clock, and real network behaviour. |
+| **Browser** | Playwright + Chromium | 19 | ~27 s | What the other two structurally cannot reach: native drag-and-drop, canvas pixels, the WebAudio clock, and real network behaviour. |
 | **Manual** | a human with ears | 1 | — | Perceptual judgement only. |
 
 ```bash
@@ -98,9 +98,9 @@ manual sign-off list in `design-document.md` §12 before Playwright existed.
 | P4-01 | Pre-rendered variants served; no client stretch | Backend | `test_p4_01_audio_serves_prerendered_variant`, `..._missing_variant_404` |
 | P4-02 | `GainNode` automation drives the crossfade | Logic | `P4-02: equal-power crossfade — a^2 + b^2 == 1 …`, `P4-02: fade-out is monotonic …` |
 | P4-03 | No audible pitch/tempo artifact | **Manual** | requires listening — see below |
-| **P4-04** | **Zero server round-trips during drag** | **Browser** | `P4-04 dragging issues zero server round-trips` |
+| **P4-04** | **Drag fetches nothing; position write is coalesced** | **Browser** | `P4-04 dragging fetches nothing; it only writes the new position` |
 | **P4-05a** | **Title editable inline** | **Browser** | `P4-05a title is editable inline` |
-| P4-05b | Title persists on reload | **Known gap** | `P4-05b title does NOT persist across reload` — see below |
+| P4-05b | Title persists on reload | **Browser** | `P4-05b title persists across a reload` — gap closed, see below |
 | **P4-06** | **Click/drag the cursor seeks playback** | **Browser** | `P4-06 clicking the track window seeks playback to that time` |
 | **P4-07** | **Cursor tracks playback, stops when paused** | **Browser** | `P4-07 cursor advances while playing and holds when paused` |
 | P4-08 | Resizing the nav segment zooms | Logic | `P4-08: dragging the right edge resizes -> zooms proportionally`, `…left edge…` |
@@ -217,6 +217,33 @@ the column exists.
 
 ---
 
+## Saved mixes (MIX)
+
+Persistence for mixes. The stored shape is deliberately minimal — ordering plus
+one gap per track — because that is all a mix is once the audio is rendered.
+
+| ID | Requirement | Suite | Test |
+|---|---|---|---|
+| MIX-01 | The chain walks in order and rejects cycles, orphans and dangling refs | Backend | `test_mix_01_walk_orders_by_next_id`, `..._rejects_a_cycle`, `..._rejects_an_orphan`, `..._rejects_a_dangling_reference`, `..._empty_mix_walks_to_nothing` |
+| MIX-02 | At most two tracks overlap — enforced server-side, on both write paths | Backend | `test_mix_02_neighbours_may_overlap`, `..._a_third_track_may_not_reach_the_first`, `..._exact_abutment_is_legal`, `..._checks_every_window_not_just_the_first`, `..._short_chains_are_always_legal`, `..._api_refuses_a_three_way_overlap`, `..._drag_cannot_create_a_three_way_overlap` |
+| MIX-03 | A drag is one row, one column, validated the same way | Backend | `test_mix_03_drag_writes_one_row`, `test_mix_03_min_delta_keeps_a_drag_inside_the_invariant`, `..._first_track_has_no_floor` |
+| MIX-04 | CRUD: create, list newest-first, rename, load, delete | Backend | `test_mix_04_create_list_rename_delete`, `..._listed_most_recently_edited_first`, `..._chain_round_trips_with_derived_offsets`, `..._unknown_mix_is_404`, `..._rename_requires_a_name`, `..._empty_mix_loads_as_the_zero_state` |
+| MIX-05 | Beats are the stored unit, so off-grid placement is unrepresentable | Backend | `test_mix_05_beats_round_trip_through_seconds`, `..._seconds_quantize_to_whole_beats`, `..._zero_bpm_is_not_a_division_error` |
+
+### Not yet covered
+
+**The mix picker has no browser test.** MIX-01..05 cover the server completely,
+and `P4-05b` proves a named mix survives a reload through the real UI, but no
+test drives the dropdown itself — selecting a different saved mix, or picking
+"+ New mix" to return to the zero state. Verified by hand.
+
+**Three-track overlap is only asserted server-side.** `state.clampOffset` stops
+the drag in the browser and mirrors `backend/mixes.check_overlaps`, but nothing
+asserts the two agree; a divergence would show up as a drag that stops short of
+where the API would allow, or a 409 the user never expects.
+
+---
+
 ## Known defects and gaps
 
 Tracked here rather than left to be rediscovered. Each has a test attached, so
@@ -290,9 +317,15 @@ in the storage layer, not the UI. It also destabilized this suite: roughly one
 run in three lost a *setup* request and failed an otherwise deterministic test,
 which is why `retries: 2` was set. Both are resolved.
 
-### P4-05b — mix title does not persist across reload (by design, v1)
+### P4-05b — mix title does not persist across reload (CLOSED)
 
-`design-document.md` §11 records this: there is no mix-save entity in v1, so the
+Mixes are now saved server-side (`mixes` / `mix_tracks`), boot resumes the most
+recently edited one, and renaming writes through — so the title comes back. The
+test was inverted from asserting the gap to asserting the requirement.
+
+The original note, kept for context:
+
+`design-document.md` §11 recorded this: there was no mix-save entity in v1, so the
 title lives only in memory. The test asserts the *current* behaviour and carries
 the instruction to flip it when a mix entity ships — the gap stays visible
 instead of silently absent.

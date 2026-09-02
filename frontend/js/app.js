@@ -23,6 +23,90 @@ let currentTransition = null;
 let gridBpm = null;
 // Index of the track being dragged, and the markers/grid that apply to it.
 let markerOriginIndex = 0;
+let currentMixId = null;
+let mixNodeIds = [];        // chain node ids, parallel to mix.tracks
+let saveTimer = null;
+let savingCount = 0;
+
+// ------------------------------------------------------------ persistence
+//
+// Only ordering and one gap per track are stored, so a write is genuinely
+// cheap. What is NOT cheap is doing it on every pointermove — that is ~60
+// requests a second for a gesture whose outcome is a single number. So a drag
+// coalesces: the position is written at most every SAVE_DEBOUNCE_MS while
+// moving, and flushed once on release.
+const SAVE_DEBOUNCE_MS = 400;
+
+function setSaveIndicator(text, busy = false) {
+  const el = $("#mix-saved");
+  el.textContent = text;
+  el.classList.toggle("saving", busy);
+}
+
+function beatsFor(track) {
+  return align.beatsBetween(track.delta ?? 0, track.bpm || gridBpm || 120);
+}
+
+/** Persist one track's position — one row, one column. */
+async function saveTrackPosition(index) {
+  const node = mixNodeIds[index];
+  const track = mix.tracks[index];
+  if (!currentMixId || !node || !track) return;
+  savingCount++;
+  setSaveIndicator("Saving\u2026", true);
+  try {
+    await api.moveMixTrack(currentMixId, node, beatsFor(track));
+    setSaveIndicator("Saved");
+  } catch (err) {
+    setSaveIndicator("Not saved");
+    toast(`Could not save position: ${err.message}`);
+  } finally {
+    if (--savingCount === 0) setTimeout(() => setSaveIndicator(""), 1800);
+  }
+}
+
+/** Persist the whole chain — used for structural edits (append/insert/remove). */
+async function saveChain() {
+  if (!currentMixId) return;
+  savingCount++;
+  setSaveIndicator("Saving\u2026", true);
+  try {
+    const payload = mix.tracks.map((t, i) => ({
+      node_id: mixNodeIds[i] || null,
+      track_id: t.id,
+      delta_beats: beatsFor(t),
+      grid_bpm: Math.round(t.bpm || gridBpm || 120),
+    }));
+    const saved = await api.putMixTracks(currentMixId, payload);
+    mixNodeIds = saved.tracks.map((t) => t.node_id);
+    setSaveIndicator("Saved");
+    await refreshMixList();
+  } catch (err) {
+    setSaveIndicator("Not saved");
+    toast(`Could not save mix: ${err.message}`);
+  } finally {
+    if (--savingCount === 0) setTimeout(() => setSaveIndicator(""), 1800);
+  }
+}
+
+let pendingSaveIndex = null;
+function scheduleMixSave() {
+  if (!currentMixId || !dragging) return;
+  pendingSaveIndex = dragging.index;
+  if (saveTimer) return;
+  saveTimer = setTimeout(() => {
+    saveTimer = null;
+    if (pendingSaveIndex !== null) saveTrackPosition(pendingSaveIndex);
+  }, SAVE_DEBOUNCE_MS);
+}
+
+function flushMixSave() {
+  if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
+  if (pendingSaveIndex !== null) {
+    saveTrackPosition(pendingSaveIndex);
+    pendingSaveIndex = null;
+  }
+}
 
 // ---------------------------------------------------------------- helpers
 function toast(msg) {
@@ -209,6 +293,7 @@ async function addFirstTrack(trackId) {
   renderAttributions();
   updateTimes();
   requestDraw();
+  await saveChain();
 }
 
 // Append the next track in the chain. Pair analysis is always against the
@@ -253,6 +338,7 @@ async function addNextTrack(trackId) {
   renderAttributions();
   updateTimes();
   requestDraw();
+  await saveChain();
 }
 
 /** Pan (without changing zoom) so `t` is comfortably inside the viewport. */
@@ -315,15 +401,25 @@ tlCanvas.addEventListener("pointermove", (e) => {
   const markers = dragging.index === markerOriginIndex + 1 ? currentMarkers : [];
   const snapped = align.snapOffsetTo(proposed, markers, beatAttractors(), gridBpm);
 
+  // At most two tracks may overlap: clamp before storing, so the drag simply
+  // stops rather than producing a state the API would reject.
+  const legal = state.clampOffset(mix, dragging.index, snapped);
+  // Re-snap after clamping — the clamp floor is not necessarily on a beat.
+  const onGrid = legal > snapped
+    ? align.snapOffsetTo(legal + 1e-6, [], beatAttractors(), gridBpm)
+    : snapped;
+
   // Rigid ripple: setOffset rewrites this track's delta only, so every
   // downstream track keeps its spacing and rides along.
-  state.setOffset(mix, dragging.id, snapped);
+  state.setOffset(mix, dragging.id, Math.max(legal, onGrid));
+  scheduleMixSave();
   nav.setTotal(vp, state.totalDuration(mix));
   updateTimes();
   requestDraw();
 });
 tlCanvas.addEventListener("pointerup", () => {
   if (!dragging) return;
+  flushMixSave();
   dragging = null;
   tlCanvas.classList.remove("dragging");
   if (player.playing) player.seek(mix, timeline.cursor);
@@ -469,8 +565,143 @@ function requestDraw() {
 }
 window.addEventListener("resize", requestDraw);
 
+// -------------------------------------------------------------- mix picker
+async function refreshMixList(selectId = currentMixId) {
+  const sel = $("#mix-select");
+  const mixes = await api.mixes();
+  sel.innerHTML = "";
+
+  const neu = document.createElement("option");
+  neu.value = "__new__";
+  neu.textContent = "+ New mix";
+  sel.appendChild(neu);
+
+  // Most recently edited first — the server orders by updated_at. The native
+  // listbox scrolls once there are more than fit, so a long history needs no
+  // extra handling here.
+  for (const m of mixes) {
+    const o = document.createElement("option");
+    o.value = m.id;
+    o.textContent = `${m.name} \u00b7 ${m.track_count} track${m.track_count === 1 ? "" : "s"}`;
+    sel.appendChild(o);
+  }
+  sel.value = selectId && mixes.some((m) => m.id === selectId) ? selectId : "__new__";
+}
+
+/** Reset to the zero state: no tracks, browse-by-genre deck. */
+async function showZeroState() {
+  mix.tracks.length = 0;
+  mixNodeIds = [];
+  currentMarkers = [];
+  currentTransition = null;
+  gridBpm = null;
+  markerOriginIndex = 0;
+  timeline.setMarkers([], null);
+  timeline.waveforms.clear();
+  player.stop();
+  $("#btn-play").disabled = true;
+  $("#btn-play").innerHTML = "&#9654;";
+  $("#drop-hint").classList.remove("hidden");
+  timeline.setCursor(0);
+  nav.setTotal(vp, 0);
+  vp.start = 0; vp.dur = vp.total;
+  await renderDeckZeroState();
+  renderAttributions();
+  updateTimes();
+  requestDraw();
+}
+
+/**
+ * Load a saved mix. A mix with tracks resumes where it left off — the deck
+ * shows what to play NEXT, ranked against the last track, rather than dropping
+ * back to the browse view. An empty mix is the zero state.
+ */
+async function loadMix(id) {
+  const data = await api.mix(id);
+  currentMixId = data.id;
+  mix.title = data.name;
+  $("#mix-title").textContent = data.name;
+
+  if (!data.tracks.length) {
+    await showZeroState();
+    await refreshMixList(id);
+    return;
+  }
+
+  mix.tracks.length = 0;
+  mixNodeIds = [];
+  timeline.waveforms.clear();
+  gridBpm = data.tracks[data.tracks.length - 1].grid_bpm || null;
+
+  for (const entry of data.tracks) {
+    const meta = catalog.find((c) => c.id === entry.track_id);
+    if (!meta) continue;
+    const wf = await api.waveform(entry.track_id, entry.grid_bpm);
+    timeline.setWaveform(entry.track_id, wf);
+    state.addTrack(mix, {
+      id: meta.id, name: meta.name, artist: meta.artist,
+      duration: wf.duration_s, bpm: entry.grid_bpm,
+    }, entry.delta_s);
+    mixNodeIds.push(entry.node_id);
+  }
+
+  await Promise.all(mix.tracks.map((t) => player.load(t.id, t.bpm)));
+
+  // Markers for the final junction, so the next drop has somewhere to snap.
+  const last = mix.tracks[mix.tracks.length - 1];
+  if (mix.tracks.length >= 2) {
+    const prev = mix.tracks[mix.tracks.length - 2];
+    try {
+      const tr = await api.transitions(prev.id, last.id);
+      currentTransition = tr;
+      currentMarkers = tr.markers;
+      markerOriginIndex = mix.tracks.length - 2;
+      timeline.setMarkers(currentMarkers, state.offsets(mix)[markerOriginIndex]);
+    } catch { /* no shared grid: no markers to show */ }
+  }
+
+  $("#drop-hint").classList.add("hidden");
+  $("#btn-play").disabled = false;
+  nav.setTotal(vp, state.totalDuration(mix));
+  vp.start = 0; vp.dur = vp.total;
+  // Resume the session: suggest what comes next, not what to start with.
+  await renderDeckRecommendations(last.id);
+  renderAttributions();
+  updateTimes();
+  requestDraw();
+  await refreshMixList(id);
+}
+
+$("#mix-select").addEventListener("change", async (e) => {
+  const value = e.target.value;
+  try {
+    if (value === "__new__") {
+      const created = await api.createMix("Untitled Mix");
+      currentMixId = created.id;
+      mix.title = created.name;
+      $("#mix-title").textContent = created.name;
+      await showZeroState();
+      await refreshMixList(created.id);
+    } else {
+      await loadMix(value);
+    }
+  } catch (err) {
+    toast(`Could not open mix: ${err.message}`);
+  }
+});
+
 // ------------------------------------------------------------------- title
 $("#mix-title").addEventListener("input", (e) => { mix.title = e.target.textContent.trim(); });
+$("#mix-title").addEventListener("blur", async () => {
+  const name = mix.title || "Untitled Mix";
+  if (!currentMixId) return;
+  try {
+    await api.renameMix(currentMixId, name);
+    await refreshMixList(currentMixId);
+  } catch (err) {
+    toast(`Could not rename mix: ${err.message}`);
+  }
+});
 $("#mix-title").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); e.target.blur(); } });
 
 // ----------------------------------------------------------------- credits
@@ -529,10 +760,19 @@ async function waitForCatalog() {
   try {
     await waitForCatalog();
     catalog = await api.tracks();
-    await renderDeckZeroState();
-    renderAttributions();
-    updateTimes();
-    requestDraw();
+
+    // Resume the most recently edited mix; if there are none, start one so
+    // that everything the user does from here is already being saved.
+    const existing = await api.mixes();
+    if (existing.length) {
+      await loadMix(existing[0].id);
+    } else {
+      const created = await api.createMix("Untitled Mix");
+      currentMixId = created.id;
+      await showZeroState();
+      await refreshMixList(created.id);
+    }
+
     requestAnimationFrame(tick);
     hideBootOverlay();
   } catch (err) {

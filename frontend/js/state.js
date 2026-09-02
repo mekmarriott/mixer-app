@@ -149,6 +149,43 @@ export function overlapsFor(mix, i) {
   return { incoming: overlapAt(mix, i - 1), outgoing: overlapAt(mix, i) };
 }
 
+// At most two tracks may sound at once, so a track must never reach its
+// second-nearest neighbour. Mirrors backend/mixes.py:check_overlaps — the API
+// enforces the same rule, so a drag is clamped to exactly what will be
+// accepted rather than being rejected after the fact.
+export const MAX_SIMULTANEOUS = 2;
+
+/**
+ * Smallest legal absolute start for the track at `index`.
+ *
+ * Three constraints, all consequences of the same rule:
+ *   - it may not start before its predecessor (that would reorder the mix);
+ *   - it may not reach back into its second-nearest predecessor;
+ *   - dragging it earlier drags its successor with it (rigid ripple), so the
+ *     successor must not reach back into *its* second-nearest predecessor.
+ */
+export function minOffsetFor(mix, index) {
+  if (index <= 0) return 0;
+  const offs = offsets(mix);
+  const tracks = mix.tracks;
+  let floor = offs[index - 1];
+
+  const back = index - MAX_SIMULTANEOUS;
+  if (back >= 0) floor = Math.max(floor, offs[back] + tracks[back].duration);
+
+  const next = tracks[index + 1];
+  if (next) {
+    const prev = tracks[index - 1];
+    floor = Math.max(floor, offs[index - 1] + prev.duration - (next.delta ?? 0));
+  }
+  return Math.max(0, floor);
+}
+
+/** Clamp a proposed absolute start to the legal range. */
+export function clampOffset(mix, index, proposed) {
+  return Math.max(minOffsetFor(mix, index), proposed);
+}
+
 export function formatTime(s) {
   if (!isFinite(s) || s < 0) s = 0;
   const h = Math.floor(s / 3600);

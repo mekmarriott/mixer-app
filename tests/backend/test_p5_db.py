@@ -119,6 +119,9 @@ class TestDialect(unittest.TestCase):
             self.assertEqual(sum(1 for s in statements if kind in s),
                              schema.count(kind), kind)
         self.assertGreaterEqual(sum(1 for s in statements if "CREATE TABLE" in s), 3)
+        # Nothing was split mid-statement: each chunk carries one CREATE.
+        for stmt in statements:
+            self.assertLessEqual(stmt.count("CREATE "), 1, stmt[:80])
 
     def test_both_dialects_produce_executable_ddl_for_sqlite(self):
         """Sanity check that the canonical schema really is valid SQL."""

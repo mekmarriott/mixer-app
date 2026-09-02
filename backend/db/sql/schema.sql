@@ -58,6 +58,39 @@ CREATE TABLE IF NOT EXISTS latency (
     at       REAL NOT NULL
 );
 
+-- A saved mix. `head_id` is the first node of the track chain; NULL means the
+-- mix exists but is empty (the zero state).
+CREATE TABLE IF NOT EXISTS mixes (
+    id         TEXT PRIMARY KEY,
+    name       TEXT NOT NULL,
+    head_id    TEXT,
+    created_at REAL NOT NULL,
+    updated_at REAL NOT NULL
+);
+
+-- One track's placement within a mix, as a singly-linked list.
+--
+-- Why a linked list rather than a position column: an insert or delete in the
+-- middle of a long mix repoints one `next_id` instead of renumbering every
+-- following row. The cost is that ordering cannot be expressed in SQL — a mix
+-- is read whole and walked in Python (bounded at 100 nodes), and the walk
+-- guards against cycles and orphans.
+--
+-- Why `delta_beats` rather than a position in seconds: it is the gap from the
+-- PREVIOUS track's start, in whole beats at `grid_bpm`. Relative means a
+-- ripple edit rewrites ONE row and the rest of the chain moves with it.
+-- Integer beats mean an off-grid placement is not representable at all, which
+-- is what makes beat alignment structural rather than merely enforced in the
+-- UI. Seconds are derived: delta_beats * 60 / grid_bpm.
+CREATE TABLE IF NOT EXISTS mix_tracks (
+    id          TEXT PRIMARY KEY,
+    mix_id      TEXT NOT NULL REFERENCES mixes (id) ON DELETE CASCADE,
+    track_id    TEXT NOT NULL REFERENCES tracks (id) ON DELETE CASCADE,
+    next_id     TEXT,
+    delta_beats INTEGER NOT NULL,
+    grid_bpm    INTEGER NOT NULL
+);
+
 -- Supports the recommendation pre-filter (docs/latency-report.md §Projections):
 -- candidates are mixable tracks, narrowed by genre bucket and Camelot key.
 CREATE INDEX IF NOT EXISTS idx_tracks_match ON tracks (mixable, genre, camelot);
@@ -65,3 +98,7 @@ CREATE INDEX IF NOT EXISTS idx_latency_stage ON latency (stage);
 
 -- Startup ingestion asks "what is not ready yet?" once per run.
 CREATE INDEX IF NOT EXISTS idx_tracks_status ON tracks (status);
+-- A mix is always loaded whole, so the chain walk is one indexed read.
+CREATE INDEX IF NOT EXISTS idx_mix_tracks_mix ON mix_tracks (mix_id);
+-- The mix picker lists most-recently-edited first.
+CREATE INDEX IF NOT EXISTS idx_mixes_updated ON mixes (updated_at);

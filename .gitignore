@@ -34,3 +34,6 @@ blobs/
 
 # OS
 .DS_Store
+
+# Local screenshots from manual verification
+*.png

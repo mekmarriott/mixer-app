@@ -35,20 +35,35 @@ test.describe("free-drag alignment", () => {
     await expect.poll(() => readClock(page, "#time-total")).toBeLessThan(totalRight);
   });
 
-  test("P4-04 dragging issues zero server round-trips", async ({ page }) => {
+  test("P4-04 dragging fetches nothing; it only writes the new position", async ({ page }) => {
     await bootApp(page);
     await addFirstTrack(page);
     await addSecondTrack(page);
 
-    // Everything the drag needs was preloaded at drop time; from here the
-    // network must go completely silent (project plan, Phase 4).
-    const requests = [];
-    page.on("request", (r) => requests.push(r.url()));
+    const reads = [];
+    const writes = [];
+    page.on("request", (r) => {
+      const path = new URL(r.url()).pathname;
+      if (r.method() === "GET") reads.push(path);
+      else writes.push(`${r.method()} ${path}`);
+    });
 
     await dragTrackTwo(page, 100);
     await dragTrackTwo(page, -60);
-    await page.waitForTimeout(500);
+    await page.waitForTimeout(900);
 
-    expect(requests, `unexpected requests during drag:\n${requests.join("\n")}`).toEqual([]);
+    // The original requirement: everything the drag needs — audio, analysis,
+    // waveforms, transition curve — was preloaded at drop time, so a drag
+    // FETCHES nothing. That still holds and is the property that keeps
+    // dragging responsive.
+    expect(reads, `drag fetched from the server:\n${reads.join("\n")}`).toEqual([]);
+
+    // Position IS persisted, deliberately: the write is one row, one column.
+    // What must not happen is a request per pointermove — those fire ~60/s, so
+    // the drag coalesces and flushes on release.
+    expect(writes.length).toBeGreaterThan(0);
+    expect(writes.length, `too many writes for two drags:\n${writes.join("\n")}`)
+      .toBeLessThanOrEqual(6);
+    expect(writes.every((w) => w.startsWith("PATCH /api/mixes/"))).toBe(true);
   });
 });

@@ -19,12 +19,30 @@ export const MARKER_LANE_H = 30;
 const DECK_ROW = "#deck .deck-row";
 export const DRAGGABLE_ROW = `${DECK_ROW}[draggable="true"]`;
 
-/** Load the app and wait until boot() has painted the deck and gone quiet. */
-export async function bootApp(page) {
+/**
+ * Load the app on a FRESH, empty mix.
+ *
+ * Mixes are persisted and boot resumes the most recently edited one, so
+ * without this every test would inherit whatever the previous test built.
+ * Creating a mix makes it the most recent; the reload then resumes it, which
+ * also exercises the real resume path rather than a test-only shortcut.
+ */
+export async function bootApp(page, { fresh = true } = {}) {
   await page.goto("/");
-  await expect(page.locator(DECK_ROW).first()).toBeVisible();
-  // Each row lazily fetches a mini waveform; let that settle so tests that
-  // count requests (P4-04) start from a silent baseline.
+  await expect(page.locator(DECK_ROW).first()).toBeVisible({ timeout: 60_000 });
+
+  if (fresh) {
+    await page.evaluate(() =>
+      fetch("/api/mixes", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: "Untitled Mix" }),
+      }).then((r) => r.json()));
+    await page.reload();
+    await expect(page.locator(DECK_ROW).first()).toBeVisible({ timeout: 60_000 });
+  }
+
+  // Let boot traffic settle so tests that count requests start from silence.
   await page.waitForLoadState("networkidle");
 }
 

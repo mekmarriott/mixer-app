@@ -60,7 +60,7 @@
 - [ ] **P4-01** Client loads pre-rendered, tempo-matched variants — verify no client-side time-stretch computation occurs at runtime
 - [ ] **P4-02** Crossfade is driven by `GainNode` automation scheduled against the beat grid
 - [ ] **P4-03** No audible pitch/tempo artifact ("chipmunk effect") — manual listening QA across a representative sample of track pairs
-- [ ] **P4-04** Dragging a track updates playback live with zero server round-trips (verify via network inspection during drag)
+- [ ] **P4-04** Dragging a track updates playback live and **fetches nothing** from the server — everything it needs was preloaded at drop time. The new position is persisted, but coalesced: a drag writes a bounded number of one-row updates, never one per pointer movement
 
 ### Title
 - [ ] **P4-05** Title field is editable inline; the entered name persists correctly on reload

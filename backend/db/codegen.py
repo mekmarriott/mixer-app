@@ -221,8 +221,18 @@ def infer_result(query, tables):
 
 
 def _model_name(table):
-    """tracks -> Track, latency -> Latency (singularise a trailing 's')."""
-    stem = table[:-1] if table.endswith("s") else table
+    """tracks -> Track, latency -> Latency, mixes -> Mix.
+
+    Naive 's'-stripping turns `mixes` into `Mixe`, so the `-es` plural of a
+    sibilant stem is handled before the general case. Anything not matching
+    either rule is left alone (`latency` stays `Latency`).
+    """
+    if re.search(r"(ch|sh|ss|x|z)es$", table):
+        stem = table[:-2]
+    elif table.endswith("s") and not table.endswith("ss"):
+        stem = table[:-1]
+    else:
+        stem = table
     return "".join(part.capitalize() for part in stem.split("_"))
 
 

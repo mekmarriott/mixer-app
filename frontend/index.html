@@ -9,6 +9,12 @@
 <body>
 <header class="topbar">
   <div class="brand">DJMIXER<span class="brand-sub">prototype</span></div>
+  <div class="mix-picker">
+    <select id="mix-select" aria-label="Select a mix">
+      <option value="__new__">+ New mix</option>
+    </select>
+    <span id="mix-saved" class="mix-saved" aria-live="polite"></span>
+  </div>
   <h1 id="mix-title" class="mix-title" contenteditable="true" spellcheck="false" aria-label="Mix title">Untitled Mix</h1>
   <div class="transport">
     <button id="btn-play" class="btn-play" aria-label="Play or pause" disabled>&#9654;</button>

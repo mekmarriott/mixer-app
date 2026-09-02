@@ -122,6 +122,35 @@ export class Timeline {
       ctx.globalAlpha = 1;
     });
 
+    // Track name along the foot of each waveform, so what is playing at any
+    // point on the grid is readable without cross-referencing the deck.
+    ctx.font = `${11 * dpr}px ui-monospace, SFMono-Regular, Menlo, monospace`;
+    ctx.textBaseline = "alphabetic";
+    this.mix.tracks.forEach((track, idx) => {
+      if (!this.waveforms.has(track.id)) return;
+      const start = offs[idx];
+      const end = start + track.duration;
+      if (start > this.vp.start + this.vp.dur || end < this.vp.start) return;
+
+      // Pin the label to the visible part of the track, so a track scrolled
+      // half off-screen still shows its name.
+      const x0 = Math.max(timeToPx(this.vp, start, W), 0);
+      const x1 = Math.min(timeToPx(this.vp, end, W), W);
+      const room = x1 - x0;
+      if (room < 34 * dpr) return;             // too narrow to label legibly
+
+      const label = this._fit(ctx, track.name || track.id, room - 12 * dpr);
+      if (!label) return;
+      const tx = x0 + 6 * dpr;
+      const ty = H - 7 * dpr;
+      // Shadow first: names sit over the waveform and must stay readable.
+      ctx.fillStyle = "rgba(12,14,20,0.85)";
+      const tw = ctx.measureText(label).width;
+      ctx.fillRect(tx - 3 * dpr, ty - 11 * dpr, tw + 6 * dpr, 15 * dpr);
+      ctx.fillStyle = trackColor(idx);
+      ctx.fillText(label, tx, ty);
+    });
+
     // Marker lane (P4-20, P4-21): gold arrows atop the window, size = score.
     ctx.strokeStyle = "rgba(255,194,75,0.25)";
     ctx.lineWidth = 1 * dpr;
@@ -157,6 +186,19 @@ export class Timeline {
       ctx.moveTo(cx - 5 * dpr, 0); ctx.lineTo(cx + 5 * dpr, 0); ctx.lineTo(cx, 7 * dpr);
       ctx.closePath(); ctx.fill();
     }
+  }
+
+  /** Truncate to fit `maxW`, with an ellipsis when it does not. */
+  _fit(ctx, text, maxW) {
+    if (maxW <= 0) return "";
+    if (ctx.measureText(text).width <= maxW) return text;
+    let lo = 0, hi = text.length;
+    while (lo < hi) {
+      const mid = Math.ceil((lo + hi) / 2);
+      if (ctx.measureText(text.slice(0, mid) + "\u2026").width <= maxW) lo = mid;
+      else hi = mid - 1;
+    }
+    return lo > 0 ? text.slice(0, lo) + "\u2026" : "";
   }
 
   // Hit-testing helpers used by app.js pointer handlers.

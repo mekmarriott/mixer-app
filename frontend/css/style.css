@@ -298,3 +298,27 @@ main { flex: 1; display: flex; flex-direction: column; padding: 16px 22px; gap: 
   color: var(--text);
 }
 .genre-count { font-size: 11px; color: var(--dim); }
+
+/* ---------- mix picker ---------- */
+.mix-picker { display: flex; align-items: center; gap: 8px; }
+#mix-select {
+  max-width: 230px;
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--panel);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+#mix-select:hover { border-color: var(--dim); }
+/* A long session accumulates mixes; the native listbox scrolls on its own,
+   this just keeps the popup from running the height of the screen. */
+#mix-select option { background: var(--panel); }
+.mix-saved {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--dim);
+  min-width: 54px;
+}
+.mix-saved.saving { color: var(--gold); }
