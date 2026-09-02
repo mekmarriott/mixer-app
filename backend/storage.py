@@ -44,12 +44,59 @@ class BlobStoreError(RuntimeError):
     pass
 
 
-def master_key(track_id, ext="wav"):
-    return f"audio/{track_id}.{ext}"
+def master_key(track_id, ext=None):
+    """The master object the BROWSER downloads — compressed (see
+    config.AUDIO_DELIVERY_CODEC). This is what `tracks.audio_key` holds."""
+    return f"audio/{track_id}.{ext or config.delivery_ext()}"
 
 
-def variant_key(track_id, grid_bpm, ext="wav"):
-    return f"variants/{track_id}_{int(grid_bpm)}.{ext}"
+def master_source_key(track_id):
+    """The canonical 16-bit PCM master, which stays local and is never served.
+
+    Kept separate from `master_key` because the two have different jobs. Every
+    variant is time-stretched FROM this file, so it has to be lossless or each
+    render would compound the previous encoder's artefacts — whereas the copy
+    that crosses the network wants to be as small as it can be. They are also
+    written at different times: this one the moment audio is fetched, the
+    delivery encoding when the track is rendered.
+    """
+    return f"audio/{track_id}.wav"
+
+
+def variant_key(track_id, grid_bpm, ext=None):
+    """A rendered variant, in the delivery encoding.
+
+    Unlike a master there is no lossless counterpart: a variant is an output,
+    re-derived from the master whenever the grid changes, so nothing ever reads
+    it back to render from.
+    """
+    return f"variants/{track_id}_{int(grid_bpm)}.{ext or config.delivery_ext()}"
+
+
+def put_delivery(store, key, samples, sr):
+    """Write `samples` to `key` in the delivery encoding. Returns the key.
+
+    The local backend hands back a real path so the encode lands straight in
+    its final location; a remote backend stages to a temp file and uploads.
+    Shared by the master and variant paths so the two cannot drift on the
+    encoding, the MIME type, or the staging dance.
+    """
+    from .audio_io import encode_delivery      # local: audio_io pulls in numpy
+
+    dst = store.local_path(key)
+    if dst is not None:
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        encode_delivery(samples, sr, dst)
+        return key
+    import tempfile
+    ext, mime, _ = config.delivery_format()
+    with tempfile.NamedTemporaryFile(suffix=f".{ext}", delete=False) as f:
+        tmp = f.name
+    try:
+        encode_delivery(samples, sr, tmp)
+        return store.put_file(key, tmp, mime)
+    finally:
+        os.unlink(tmp)
 
 
 def meta_key(track_id):
@@ -64,6 +111,21 @@ def meta_key(track_id):
 
 
 def _content_type(key):
+    """The MIME type to store `key` under.
+
+    The configured delivery formats win over `mimetypes`, which is wrong for
+    the container this project actually ships: it maps `.m4a` to
+    `audio/mp4a-latm` — a raw AAC-LATM elementary stream, not an MP4 container
+    — and browsers refuse it. It also spells WAV `audio/x-wav` where
+    DELIVERY_FORMATS says `audio/wav`, so an object's type depended on which
+    code path uploaded it. `put_delivery` passes the configured type explicitly
+    on its remote path; anything reaching `put_file` without one (a re-upload
+    from `backend.reconcile`, say) came through here instead and has to agree.
+    """
+    ext = key.rsplit(".", 1)[-1].lower() if "." in key else ""
+    for fmt_ext, mime, _encoder in config.DELIVERY_FORMATS.values():
+        if ext == fmt_ext:
+            return mime
     return mimetypes.guess_type(key)[0] or "application/octet-stream"
 
 
@@ -80,6 +142,23 @@ class BlobStore:
         raise NotImplementedError
 
     def exists(self, key):
+        raise NotImplementedError
+
+    def list_blobs(self, prefix=""):
+        """`{key: size_in_bytes}` for the store, optionally under a prefix.
+
+        Answers the question `exists()` cannot — "what is in the store that
+        the catalog never named?" — and carries sizes, because an audit that
+        knows only which keys are present cannot tell a current object from a
+        stale one sitting at the same key.
+        """
+        raise NotImplementedError
+
+    def list_keys(self, prefix=""):
+        return sorted(self.list_blobs(prefix))
+
+    def delete(self, key):
+        """Remove an object. Idempotent: deleting an absent key is not an error."""
         raise NotImplementedError
 
     def local_path(self, key):
@@ -146,6 +225,22 @@ class LocalBlobStore(BlobStore):
     def exists(self, key):
         return self._path(key).is_file()
 
+    def list_blobs(self, prefix=""):
+        root = self.root
+        if not root.is_dir():
+            return {}
+        found = {}
+        for path in root.rglob("*"):
+            if not path.is_file():
+                continue
+            key = path.relative_to(root).as_posix()
+            if key.startswith(prefix):
+                found[key] = path.stat().st_size
+        return found
+
+    def delete(self, key):
+        self._path(key).unlink(missing_ok=True)
+
 
 class VercelBlobStore(BlobStore):
     """Vercel Blob via the `vercel blob` CLI.
@@ -208,13 +303,37 @@ class VercelBlobStore(BlobStore):
         self.cli = cli
         self._urls = {}
 
+    @property
+    def argv(self):
+        """The CLI as a command list. A string is one word; a sequence is used
+        as given, so `["npx", "--yes", "vercel@latest"]` works without a global
+        install."""
+        return [self.cli] if isinstance(self.cli, str) else list(self.cli)
+
+    def _env(self):
+        """The subprocess environment, minus a half-configured OIDC setup.
+
+        The CLI refuses to run when BLOB_STORE_ID is set without
+        VERCEL_OIDC_TOKEN ("must both be set, or both be unset"). The Vercel
+        Supabase/Blob integration writes BLOB_STORE_ID into .env on its own,
+        and config.load_env_file() then puts it in os.environ — so simply
+        having pulled the environment breaks every upload with an error about
+        OIDC that names nothing the caller set. Drop it when authenticating
+        with a read-write token, which is the only mode this class uses.
+        """
+        env = dict(os.environ)
+        if self.token and not env.get("VERCEL_OIDC_TOKEN"):
+            env.pop("BLOB_STORE_ID", None)
+        return env
+
     def _run(self, args):
-        if not shutil.which(self.cli):
+        argv = self.argv
+        if not shutil.which(argv[0]):
             raise BlobStoreError(
-                f"{self.cli!r} not on PATH — the Vercel CLI is required to "
+                f"{argv[0]!r} not on PATH — the Vercel CLI is required to "
                 "upload to Vercel Blob (npm i -g vercel)")
-        proc = subprocess.run([self.cli, "blob", *args],
-                              capture_output=True, text=True)
+        proc = subprocess.run([*argv, "blob", *args],
+                              capture_output=True, text=True, env=self._env())
         if proc.returncode != 0:
             raise BlobStoreError(
                 f"vercel blob {' '.join(args)} failed ({proc.returncode}): "
@@ -282,6 +401,46 @@ class VercelBlobStore(BlobStore):
             return True
         except BlobStoreError:
             return False
+
+    #: A row of `vercel blob list`: uploadedAt, size, pathname, url. The CLI
+    #: has no machine-readable output mode, so the URL — the one column with
+    #: an unambiguous shape — anchors the match and the size is read back from
+    #: the columns before it.
+    LIST_ROW_RE = re.compile(
+        r"^\s*\S+\s+(?P<size>\d+)\s+(?P<pathname>\S+)\s+"
+        r"(?P<url>https://\S+\.blob\.vercel-storage\.com/\S+)\s*$")
+    #: `> To display the next page run \`vercel blob list ... --next <cursor>\``
+    LIST_CURSOR_RE = re.compile(r"--next\s+(\S+?)`")
+
+    def list_blobs(self, prefix=""):
+        """`{key: size}` for the whole store, following the CLI's pagination."""
+        found, cursor, seen_cursors = {}, None, set()
+        while True:
+            args = ["list", "--limit", "1000"]
+            if prefix:
+                args += ["--prefix", prefix]
+            if cursor:
+                args += ["--next", cursor]
+            if self.token:
+                args += ["--rw-token", self.token]
+            out = self._run(args)
+            for line in out.splitlines():
+                m = self.LIST_ROW_RE.match(line)
+                if m:
+                    found[m.group("pathname")] = int(m.group("size"))
+            m = self.LIST_CURSOR_RE.search(out)
+            # A cursor that repeats means the page did not advance; stop rather
+            # than page forever.
+            if not m or m.group(1) in seen_cursors:
+                return found
+            cursor = m.group(1)
+            seen_cursors.add(cursor)
+
+    def delete(self, key):
+        args = ["del", key]
+        if self.token:
+            args += ["--rw-token", self.token]
+        self._run(args)
 
 
 _STORE = None

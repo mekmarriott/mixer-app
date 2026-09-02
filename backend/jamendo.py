@@ -263,7 +263,9 @@ def persist_master(meta, samples, sr, store=None):
     import json
 
     store = store or storage.get_store()
-    key = storage.master_key(meta["id"])
+    # The PCM master, not the delivery encoding: this is the file every variant
+    # is rendered from, and the render stage reads it back by this key.
+    key = storage.master_source_key(meta["id"])
     store.put_bytes(storage.meta_key(meta["id"]),
                     json.dumps(meta, indent=2).encode(), "application/json")
     dst = store.local_path(key)
@@ -291,8 +293,18 @@ def persist_master(meta, samples, sr, store=None):
 # a time while preserving the same rules — retry an empty success, never retry
 # a real API error.
 
-#: Documented maximum for the `limit` parameter on /tracks.
-MAX_IDS_PER_REQUEST = 200
+#: Documented maximum for the `limit` parameter on /tracks — how many results
+#: one response may carry.
+MAX_RESULTS_PER_REQUEST = 200
+
+#: How many ids one batched lookup may ask for, which is a DIFFERENT and much
+#: smaller limit: the API caps any multi-value parameter at 50 and rejects the
+#: whole request past it ("The maximum number of multiple values a parameter
+#: can receive is: 50"). Batching by the `limit` cap instead looks right and
+#: works for any catalog under 50 tracks, then fails outright on the first
+#: import bigger than that — which is exactly when a batched fetch is the only
+#: affordable option.
+MAX_IDS_PER_REQUEST = 50
 
 #: Deliberately conservative. 2.0 req/s is the highest rate observed to run
 #: clean against the live API (30 serial calls, zero 429s) — a floor on the
@@ -383,7 +395,7 @@ def _fetch_batch(chunk, client_id, get, limiter, budget, sleep,
             "id": " ".join(chunk),
             "format": "json",
             "audioformat": "mp32",
-            "limit": MAX_IDS_PER_REQUEST,
+            "limit": MAX_RESULTS_PER_REQUEST,
             "include": "licenses musicinfo stats",
         }, limiter=limiter, budget=budget)
         headers = payload.get("headers") or {}

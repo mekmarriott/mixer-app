@@ -38,8 +38,14 @@ status = db.status
 # and re-rendering only the variants that are actually missing — working
 # unchanged against the same files on disk.
 def _master_path(track_id, store=None):
+    """The PCM master, which is what resuming reads back.
+
+    `master_source_key`, not `master_key`: the latter names the compressed copy
+    the browser downloads, and everything here — reuse-after-crash, re-render
+    of missing variants — needs samples to compute from, not bytes to serve.
+    """
     store = store or storage.get_store()
-    return store.local_path(storage.master_key(track_id))
+    return store.local_path(storage.master_source_key(track_id))
 
 
 def _variant_path(track_id, grid_bpm, store=None):
@@ -147,7 +153,12 @@ def ingest_track(database, entry, mode, timer=None, force=False):
             # Unknown licenses raise here, before anything is persisted (P1-07).
             lic = licensing.parse_license(meta["license"])
             with timer.stage("persist_master", tid):
-                audio_key = jamendo.persist_master(meta, samples, sr)
+                # Two files: the PCM master every variant is rendered from, and
+                # the compressed copy the browser downloads. audio_key names the
+                # second — the first is never served.
+                jamendo.persist_master(meta, samples, sr)
+                audio_key = storage.put_delivery(
+                    storage.get_store(), storage.master_key(tid), samples, sr)
             catalog.save_ingested_track({
                 **meta, **lic,
                 "mixable": not lic["nd"],
@@ -187,7 +198,8 @@ def ingest_track(database, entry, mode, timer=None, force=False):
         # --------------------------------------------------------- variants
         grid, variants, rendered = [], [], 0
         if mixable:
-            grid = bpm_grid.grid_points(a["bpm"], meta["genre"])
+            meta["genre"] = bpm_grid.resolve_bucket(meta.get("genre"), a["bpm"]) or ""
+            grid = bpm_grid.grid_points(a["bpm"], meta["genre"] or None)
             to_render = []
             for g in grid:
                 vpath = _variant_path(tid, g)

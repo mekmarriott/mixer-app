@@ -145,6 +145,52 @@ DB_ACQUIRE_TIMEOUT_S = 5.0
 # Before any track is chosen there is nothing to match against, so the opening
 # view is a browse surface: a few tracks per genre, no pair analysis.
 DECK_TRACKS_PER_GENRE = 10
+# ---- Delivery encoding --------------------------------------------------
+# Rendering keeps 16-bit PCM: a variant is time-stretched FROM the master, so a
+# lossy master would compound its own artefacts through every render. What
+# ships to the BROWSER is compressed, because PCM is roughly 5x larger than it
+# needs to be and audio download dominates time-to-first-sound — a 219 s master
+# is 9.7 MB as WAV against 1.7 MB as AAC, and the client loads one per track.
+#
+# AAC in MP4 rather than Opus. Measured on a real master (see
+# tests/backend/test_p9_delivery.py and docs/infrastructure-plan.md):
+#
+#     codec        bytes      vs WAV   decodeAudioData   offset
+#     WAV        8,698,788      1.0x         77 ms          -
+#     AAC 64k    1,652,996      5.3x        168 ms       0 samples
+#     Opus 64k   1,765,314      4.9x        697 ms       0 samples
+#
+# AAC is smaller than Opus at the same nominal bitrate on this material,
+# decodes four times faster, and is the only one of the two that Safari has
+# always accepted through decodeAudioData. Both decode sample-aligned in
+# Chrome, which is the property that actually matters: a codec that shifted
+# the audio by its priming delay would move every beat off the grid the
+# analysis recorded, and the mix would drift by a fixed offset on every track.
+AUDIO_DELIVERY_CODEC = os.environ.get("DJMIXER_AUDIO_CODEC", "aac")
+AUDIO_DELIVERY_BITRATE = os.environ.get("DJMIXER_AUDIO_BITRATE", "64k")
+
+#: codec -> (file extension, MIME type, ffmpeg encoder). "wav" ships PCM
+#: unchanged, which is the escape hatch if a codec is ever suspected of
+#: shifting the audio.
+DELIVERY_FORMATS = {
+    "aac": ("m4a", "audio/mp4", "aac"),
+    "opus": ("opus", "audio/ogg", "libopus"),
+    "wav": ("wav", "audio/wav", None),
+}
+
+
+def delivery_format():
+    """`(ext, mime, encoder)` for the configured delivery codec."""
+    try:
+        return DELIVERY_FORMATS[AUDIO_DELIVERY_CODEC]
+    except KeyError:
+        raise ValueError(
+            "DJMIXER_AUDIO_CODEC must be one of %s, got %r"
+            % (", ".join(sorted(DELIVERY_FORMATS)), AUDIO_DELIVERY_CODEC))
+
+
+def delivery_ext():
+    return delivery_format()[0]
 DECK_WAVEFORM_POINTS = 120              # deck row thumbnails
 TIMELINE_WAVEFORM_POINTS = 480          # track window
 FRAME_SIZE = 2048

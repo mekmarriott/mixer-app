@@ -28,8 +28,12 @@ class TestBlobStore(unittest.TestCase):
     def test_keys_are_provider_agnostic(self):
         """Keys carry no host, no scheme and no local path — which is what
         makes the Vercel Blob -> R2 move an env var, not a migration."""
-        self.assertEqual(storage.master_key("1001"), "audio/1001.wav")
-        self.assertEqual(storage.variant_key("1001", 120), "variants/1001_120.wav")
+        ext = config.delivery_ext()
+        self.assertEqual(storage.master_key("1001"), f"audio/1001.{ext}")
+        self.assertEqual(storage.variant_key("1001", 120),
+                         f"variants/1001_120.{ext}")
+        # The PCM master keeps the historical name; only what ships is encoded.
+        self.assertEqual(storage.master_source_key("1001"), "audio/1001.wav")
         for key in (storage.master_key("1001"), storage.variant_key("1001", 120)):
             self.assertNotIn("://", key)
             self.assertFalse(key.startswith("/"))
@@ -155,14 +159,17 @@ class TestAudioRedirect(unittest.TestCase):
     def test_master_redirects_to_blob_url(self):
         r = self.client.get("/api/tracks/1001/audio")
         self.assertEqual(r.status_code, 302)
-        self.assertEqual(r.headers["Location"], "/blobs/audio/1001.wav")
+        self.assertEqual(r.headers["Location"],
+                         f"/blobs/audio/1001.{config.delivery_ext()}")
 
     def test_variant_redirects_to_blob_url(self):
         with read() as q:
             bpm = q.list_variants_for_track(track_id="1001")[0].grid_bpm
         r = self.client.get(f"/api/tracks/1001/audio?bpm={bpm}")
         self.assertEqual(r.status_code, 302)
-        self.assertEqual(r.headers["Location"], f"/blobs/variants/1001_{bpm}.wav")
+        self.assertEqual(
+            r.headers["Location"],
+            f"/blobs/variants/1001_{bpm}.{config.delivery_ext()}")
 
     def test_redirect_body_is_empty(self):
         """The whole point: the function returns a header, not the audio. A
@@ -353,15 +360,40 @@ class TestBackoff(unittest.TestCase):
 
 class TestJamendoRequestEconomy(unittest.TestCase):
     def test_batching_collapses_request_count(self):
-        """Metadata for 10k tracks costs ~50 requests batched and 10,000 not —
+        """Metadata for 10k tracks costs 200 requests batched and 10,000 not —
         against a monthly quota, that difference is the whole ballgame."""
-        self.assertEqual(jamendo.estimate_api_requests(10_000), 50)
+        self.assertEqual(jamendo.estimate_api_requests(10_000), 200)
         self.assertEqual(jamendo.estimate_api_requests(1), 1)
-        self.assertEqual(jamendo.estimate_api_requests(200), 1)
-        self.assertEqual(jamendo.estimate_api_requests(201), 2)
+        self.assertEqual(jamendo.estimate_api_requests(50), 1)
+        self.assertEqual(jamendo.estimate_api_requests(51), 2)
 
-    def test_batch_size_within_documented_max(self):
-        self.assertLessEqual(jamendo.MAX_IDS_PER_REQUEST, 200)
+    def test_id_batch_stays_within_the_multi_value_cap(self):
+        """The API rejects a request carrying more than 50 values in one
+        parameter, whole. This is NOT the `limit` cap (200) — conflating them
+        works for any catalog under 50 tracks and then fails outright on the
+        first import large enough to need batching at all."""
+        self.assertLessEqual(jamendo.MAX_IDS_PER_REQUEST, 50)
+        self.assertEqual(jamendo.MAX_RESULTS_PER_REQUEST, 200)
+
+    def test_no_batch_exceeds_the_cap_for_a_large_catalog(self):
+        sent = []
+
+        def get(url, params, timeout=30, limiter=None, budget=None):
+            sent.append(params["id"].split())
+            return {"headers": {"code": 0},
+                    "results": [{"id": i, "name": "n", "artist_name": "a",
+                                 "license_ccurl":
+                                     "http://creativecommons.org/licenses/by/3.0/",
+                                 "audiodownload_allowed": True,
+                                 "audiodownload": "http://x/a.mp3",
+                                 "shareurl": ""}
+                                for i in params["id"].split()]}
+
+        jamendo.fetch_metadata([str(i) for i in range(1200)],
+                               client_id="x", get=get, sleep=lambda _s: None)
+        self.assertTrue(sent)
+        self.assertLessEqual(max(len(b) for b in sent), 50)
+        self.assertEqual(sum(len(b) for b in sent), 1200)
 
 
 class _FakeGet:
@@ -505,7 +537,7 @@ class TestPublisherPlanning(unittest.TestCase):
 
     def test_jamendo_cost_is_reported_before_spending(self):
         cost = publish.budget_report([{"id": i} for i in range(500)], "jamendo")
-        self.assertEqual(cost["metadata_requests"], 3)
+        self.assertEqual(cost["metadata_requests"], 10)   # 500 / 50 per batch
         self.assertEqual(cost["downloads"], 500)
 
 

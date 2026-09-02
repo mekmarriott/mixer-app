@@ -127,7 +127,9 @@ class TestP1Ingestion(unittest.TestCase):
             self.assertEqual([v.grid_bpm for v in variants[t.id]], expected, t.id)
             for v in variants[t.id]:
                 self.assertLessEqual(abs(v.ratio - 1.0), config.MAX_STRETCH_RATIO + 1e-9)
-                self.assertTrue((self.tmp / "variants" / f"{t.id}_{v.grid_bpm}.wav").exists())
+                self.assertTrue(
+                    (self.tmp / "variants"
+                     / f"{t.id}_{v.grid_bpm}.{config.delivery_ext()}").exists())
 
     # ------------------------------------------------------------- P1-06
     def test_p1_06_rescale_matches_ratio_no_reanalysis(self):

@@ -111,11 +111,11 @@ class TestNoRedundantWork(ResumableCase):
     def test_variants_are_not_rerendered(self):
         self.ingest()
         before = {p.name: p.stat().st_mtime_ns
-                  for p in (self.tmp / "variants").glob("*.wav")}
+                  for p in (self.tmp / "variants").glob(f"*.{config.delivery_ext()}")}
         self.assertTrue(before)
         self.ingest()
         after = {p.name: p.stat().st_mtime_ns
-                 for p in (self.tmp / "variants").glob("*.wav")}
+                 for p in (self.tmp / "variants").glob(f"*.{config.delivery_ext()}")}
         self.assertEqual(before, after, "variant files were rewritten")
 
     def test_force_redoes_everything(self):
@@ -150,9 +150,15 @@ class TestCrashRecovery(ResumableCase):
         self.assertEqual(self.database.catalog.status_of(self.tid), status.READY)
 
     def test_missing_master_file_forces_refetch(self):
-        """State claims fetched but the file is gone — trust the disk."""
+        """State claims fetched but the file is gone — trust the disk.
+
+        The PCM master, not the delivery encoding: that is the file a resume
+        reads back, and it is the one whose absence there is no recovering from
+        without going to the network again. Losing only the compressed copy is
+        repaired by re-encoding, which costs nothing and no request."""
         self.ingest()
-        Path(storage.get_store().local_path(self.track().audio_key)).unlink()
+        Path(storage.get_store().local_path(
+            storage.master_source_key(self.tid))).unlink()
         patcher, calls = self.counting_fetch()
         with patcher:
             self.ingest()
@@ -160,18 +166,18 @@ class TestCrashRecovery(ResumableCase):
 
     def test_only_missing_variants_are_rendered(self):
         self.ingest()
-        variants = sorted((self.tmp / "variants").glob("*.wav"))
+        variants = sorted((self.tmp / "variants").glob(f"*.{config.delivery_ext()}"))
         self.assertGreater(len(variants), 1)
         victim = variants[0]
         victim.unlink()
         self._rewind_to(status.ANALYZED)
 
         survivors = {p.name: p.stat().st_mtime_ns
-                     for p in (self.tmp / "variants").glob("*.wav")}
+                     for p in (self.tmp / "variants").glob(f"*.{config.delivery_ext()}")}
         self.ingest()
         self.assertTrue(victim.exists(), "missing variant was not restored")
         after = {p.name: p.stat().st_mtime_ns
-                 for p in (self.tmp / "variants").glob("*.wav")
+                 for p in (self.tmp / "variants").glob(f"*.{config.delivery_ext()}")
                  if p.name in survivors}
         self.assertEqual(survivors, after, "intact variants were re-rendered")
 

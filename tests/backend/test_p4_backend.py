@@ -6,6 +6,7 @@ import unittest
 
 from fixture import get_fixture, read
 
+from backend import config
 from backend.app import create_app
 
 
@@ -31,7 +32,8 @@ class TestP4Backend(unittest.TestCase):
         self.assertTrue(variants, "fixture track 1001 should have variants")
         grid_bpm = variants[0].grid_bpm
 
-        vpath = self.tmp / "variants" / f"1001_{grid_bpm}.wav"
+        vpath = (self.tmp / "variants"
+                 / f"1001_{grid_bpm}.{config.delivery_ext()}")
         self.assertTrue(vpath.exists())
         on_disk = vpath.read_bytes()
 

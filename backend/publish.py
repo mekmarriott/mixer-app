@@ -49,29 +49,21 @@ from pathlib import Path
 from . import bpm_grid, config, jamendo, licensing, ratelimit, storage
 from . import analysis as analysis_mod
 from . import segmentation, stretch
-from .audio_io import load_wav, save_wav
+from .audio_io import load_wav
 
 
 def _write_variant(store, tid, grid_bpm, samples, sr):
     """Persist one rendered variant through the blob store, returning its key.
 
+    Written in the delivery encoding: a variant is only ever downloaded, never
+    rendered from, so there is nothing to be gained by keeping it lossless and
+    roughly five times the bytes to be paid for it on every audition.
+
     The local backend hands back a real path so the render goes straight to its
     final location; a remote backend stages to a temp file and uploads.
     """
-    key = storage.variant_key(tid, grid_bpm)
-    dst = store.local_path(key)
-    if dst is not None:
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        save_wav(dst, samples, sr)
-        return key
-    import tempfile
-    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
-        tmp = f.name
-    try:
-        save_wav(tmp, samples, sr)
-        return store.put_file(key, tmp, "audio/wav")
-    finally:
-        os.unlink(tmp)
+    return storage.put_delivery(store, storage.variant_key(tid, grid_bpm),
+                                samples, sr)
 
 
 
@@ -173,8 +165,8 @@ def fetch_masters(entries, mode, store, io_workers=2, api_limiter=None,
     for e in entries:
         tid = str(e["id"])
         meta = None if refetch else _load_cached_meta(store, tid)
-        if meta is not None and store.exists(storage.master_key(tid)):
-            cached.append((meta, storage.master_key(tid)))
+        if meta is not None and store.exists(storage.master_source_key(tid)):
+            cached.append((meta, storage.master_source_key(tid)))
         else:
             need_fetch.append(e)
     if cached:
@@ -193,8 +185,13 @@ def fetch_masters(entries, mode, store, io_workers=2, api_limiter=None,
     def one(meta):
         encoded = jamendo.download_audio(meta["audiodownload"],
                                          limiter=dl_limiter)
-        samples, sr = jamendo.decode_to_samples(encoded)
-        return meta, jamendo.persist_master(meta, samples, sr, store=store)
+        # decode_to_samples takes the target rate and returns the samples
+        # alone — it does not hand back a (samples, rate) pair. Unpacking it
+        # as one raises ValueError per track, which the loop below catches and
+        # logs, so the run completes "successfully" having fetched nothing.
+        samples = jamendo.decode_to_samples(encoded, config.SAMPLE_RATE)
+        return meta, jamendo.persist_master(meta, samples,
+                                            config.SAMPLE_RATE, store=store)
 
     out = list(cached)
     # Bounded concurrency; the limiter caps the rate regardless, but an
@@ -233,28 +230,41 @@ def _worker_init(data_dir, backend):
     _WORKER_STORE = storage.make_store(backend)
 
 
-def _render(meta, master_key, store=None):
+def _render(meta, source_key, store=None):
     """Analyse one master and render its variants. Returns a row dict.
 
     Runs in a worker process. Reads the master back from the store by key
     rather than receiving samples, so the only things pickled are strings.
+
+    `source_key` names the PCM master. The delivery encoding of that same
+    master is produced here rather than at fetch time, so that a catalog whose
+    masters were already on disk before delivery encoding existed grows its
+    encoded copies on the next publish instead of needing a separate migration.
     """
     store = store or _WORKER_STORE or storage.get_store()
-    path = store.local_path(master_key)
+    path = store.local_path(source_key)
     if path is None:
         raise RuntimeError(
             "the CPU stage needs a locally readable master; run the publisher "
             "against the local store and upload afterwards")
     samples, sr = load_wav(path)
 
+    master_key = storage.master_key(meta["id"])
+    if master_key != source_key and not store.exists(master_key):
+        storage.put_delivery(store, master_key, samples, sr)
+
     a = analysis_mod.analyze(samples, sr)
     segs = segmentation.segment(a)
     lic = licensing.parse_license(meta["license"])
     mixable = not lic["nd"]
 
+    # The band is only knowable once the BPM is. A discovered entry carries
+    # `auto`; a curated one keeps whatever was measured at curation time.
+    genre = bpm_grid.resolve_bucket(meta.get("genre"), a["bpm"])
+
     variants = []
     if mixable:
-        for g in bpm_grid.grid_points(a["bpm"], meta["genre"]):
+        for g in bpm_grid.grid_points(a["bpm"], genre):
             ratio = g / a["bpm"]
             out = stretch.stretch(samples, sr, ratio)
             vkey = _write_variant(store, meta["id"], g, out, sr)
@@ -262,6 +272,7 @@ def _render(meta, master_key, store=None):
 
     return {
         **meta, **lic,
+        "genre": genre or "",
         "mixable": mixable,
         "native_bpm": a["bpm"],
         "camelot": a["key"]["camelot"],
