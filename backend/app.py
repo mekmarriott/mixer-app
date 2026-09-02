@@ -33,7 +33,6 @@ Handlers that need catalog data are gated on warmup, so a browser arriving
 mid-startup gets a 503 with progress it can render as a wait screen instead of
 a partial page.
 """
-import mimetypes
 from functools import wraps
 
 from flask import (Flask, abort, jsonify, redirect, request, send_file,
@@ -395,9 +394,11 @@ def create_app(run_ingestion=True, database=None, warmup_async=False):
             abort(404)
         # Derived from the key, not fixed: masters and variants ship encoded
         # now, and labelling an .m4a as audio/wav makes decodeAudioData fail on
-        # a file that is perfectly good.
-        mime = mimetypes.guess_type(key)[0] or "application/octet-stream"
-        return send_file(path, mimetype=mime, conditional=True)
+        # a file that is perfectly good. Through storage rather than mimetypes,
+        # which answers audio/mp4a-latm for .m4a — a raw elementary stream, not
+        # the MP4 container this actually is, and browsers refuse it.
+        return send_file(path, mimetype=storage._content_type(key),
+                         conditional=True)
 
     @app.get("/api/tracks/<tid>/recommendations")
     @needs_catalog
