@@ -23,11 +23,12 @@ SELECT * FROM tracks WHERE mixable = :mixable ORDER BY id;
 -- columns: id TEXT, name TEXT, artist TEXT, genre TEXT, license TEXT,
 --          license_nd BOOLEAN, license_sa BOOLEAN, license_nc BOOLEAN,
 --          mixable BOOLEAN, native_bpm REAL, camelot TEXT, duration_s REAL,
---          status TEXT, outro_energy REAL, intro_energy REAL
+--          status TEXT, outro_energy REAL, intro_energy REAL,
+--          popularity INTEGER
 SELECT id, name, artist, genre, license,
        license_nd, license_sa, license_nc,
        mixable, native_bpm, camelot, duration_s, status,
-       outro_energy, intro_energy
+       outro_energy, intro_energy, popularity
 FROM tracks
 ORDER BY id;
 
@@ -41,11 +42,11 @@ ORDER BY id;
 --          license_nd BOOLEAN, license_sa BOOLEAN, license_nc BOOLEAN,
 --          mixable BOOLEAN, native_bpm REAL, camelot TEXT, duration_s REAL,
 --          status TEXT, outro_energy REAL, intro_energy REAL,
---          deck_waveform JSONDOC
+--          deck_waveform JSONDOC, popularity INTEGER
 SELECT id, name, artist, genre, license,
        license_nd, license_sa, license_nc,
        mixable, native_bpm, camelot, duration_s, status,
-       outro_energy, intro_energy, deck_waveform
+       outro_energy, intro_energy, deck_waveform, popularity
 FROM tracks
 ORDER BY id;
 
@@ -73,6 +74,13 @@ UPDATE tracks SET native_envelope = :native_envelope WHERE id = :id;
 SELECT id FROM tracks
 WHERE analysis_json IS NOT NULL AND native_envelope IS NULL
 ORDER BY id;
+
+-- name: SetTrackPopularity :exec
+UPDATE tracks SET popularity = :popularity WHERE id = :id;
+
+-- name: ListTracksMissingPopularity :many
+-- columns: id TEXT
+SELECT id FROM tracks WHERE popularity IS NULL ORDER BY id;
 
 -- name: SetTrackDeckWaveform :exec
 UPDATE tracks SET deck_waveform = :deck_waveform WHERE id = :id;

@@ -74,7 +74,11 @@ CREATE TABLE IF NOT EXISTS tracks (
     -- those scalars do, and they scale by a ratio. So one stored native
     -- envelope answers a request at ANY grid BPM exactly, not approximately,
     -- and the analysis blob is read at ingest instead of per request.
-    native_envelope JSONDOC
+    native_envelope JSONDOC,
+    -- Total listens on Jamendo, all time. Ordering the opening view needs a
+    -- measure of what is worth hearing first, and this is the one the source
+    -- already returns with every track.
+    popularity    INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS variants (

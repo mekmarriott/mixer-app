@@ -425,4 +425,17 @@ def _meta_from_api(t, genre):
         "license": _license_from_ccurl(t.get("license_ccurl", "")),
         "audiodownload_allowed": bool(t.get("audiodownload_allowed", False)),
         "audiodownload": t.get("audiodownload", ""),
+        # Total listens, all time. `include=stats` already asked for this and
+        # then dropped it on the floor, which left the zero state with no
+        # popularity to order by and nothing to show on a row.
+        "popularity": _listens(t),
     }
+
+
+def _listens(t):
+    stats = t.get("stats") or {}
+    value = stats.get("rate_listened_total")
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None

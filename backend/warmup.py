@@ -238,8 +238,8 @@ class Warmup:
                               "nc": t.license_nc},
             "attribution": licensing.attribution(t),
             "status": t.status,
-            # Nothing stores popularity yet; deck.py orders by it when it
-            # appears and falls back to a deterministic shuffle until then.
+            # deck.py orders on this, falling back to a deterministic
+            # shuffle for any track whose listen count was never recorded.
             "popularity": getattr(t, "popularity", None),
         }
 

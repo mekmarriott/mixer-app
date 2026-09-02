@@ -241,6 +241,9 @@ class Catalog:
             deck_wf = _deck_waveform_or_none(row.get("analysis"))
             if deck_wf is not None:
                 q.set_track_deck_waveform(id=row["id"], deck_waveform=deck_wf)
+            if row.get("popularity") is not None:
+                q.set_track_popularity(id=row["id"],
+                                       popularity=int(row["popularity"]))
             native_env = _native_envelope_or_none(row.get("analysis"))
             if native_env is not None:
                 q.set_track_native_envelope(id=row["id"],

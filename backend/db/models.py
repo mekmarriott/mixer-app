@@ -41,6 +41,7 @@ class Track:
     intro_energy: float
     deck_waveform: Any
     native_envelope: Any
+    popularity: int
 
     _FIELDS = (
         ("id", "TEXT"), ("name", "TEXT"), ("artist", "TEXT"), ("genre", "TEXT"),
@@ -51,7 +52,7 @@ class Track:
         ("status_error", "TEXT"), ("source_url", "TEXT"), ("fetched_at", "REAL"),
         ("analyzed_at", "REAL"), ("ready_at", "REAL"), ("outro_energy", "REAL"),
         ("intro_energy", "REAL"), ("deck_waveform", "JSONDOC"),
-        ("native_envelope", "JSONDOC"),
+        ("native_envelope", "JSONDOC"), ("popularity", "INTEGER"),
     )
 
     @classmethod
@@ -203,13 +204,14 @@ class ListTrackSummariesRow:
     status: str
     outro_energy: float
     intro_energy: float
+    popularity: int
 
     _FIELDS = (
         ("id", "TEXT"), ("name", "TEXT"), ("artist", "TEXT"), ("genre", "TEXT"),
         ("license", "TEXT"), ("license_nd", "BOOLEAN"), ("license_sa", "BOOLEAN"),
         ("license_nc", "BOOLEAN"), ("mixable", "BOOLEAN"), ("native_bpm", "REAL"),
         ("camelot", "TEXT"), ("duration_s", "REAL"), ("status", "TEXT"),
-        ("outro_energy", "REAL"), ("intro_energy", "REAL"),
+        ("outro_energy", "REAL"), ("intro_energy", "REAL"), ("popularity", "INTEGER"),
     )
 
     @classmethod
@@ -238,6 +240,7 @@ class ListDeckRowsRow:
     outro_energy: float
     intro_energy: float
     deck_waveform: Any
+    popularity: int
 
     _FIELDS = (
         ("id", "TEXT"), ("name", "TEXT"), ("artist", "TEXT"), ("genre", "TEXT"),
@@ -245,7 +248,7 @@ class ListDeckRowsRow:
         ("license_nc", "BOOLEAN"), ("mixable", "BOOLEAN"), ("native_bpm", "REAL"),
         ("camelot", "TEXT"), ("duration_s", "REAL"), ("status", "TEXT"),
         ("outro_energy", "REAL"), ("intro_energy", "REAL"),
-        ("deck_waveform", "JSONDOC"),
+        ("deck_waveform", "JSONDOC"), ("popularity", "INTEGER"),
     )
 
     @classmethod
@@ -291,6 +294,22 @@ class GetTrackSummaryRow:
 @dataclasses.dataclass(frozen=True)
 class ListTracksMissingNativeEnvelopeRow:
     """Result row of the ListTracksMissingNativeEnvelope query."""
+
+    id: str
+
+    _FIELDS = (
+        ("id", "TEXT"),
+    )
+
+    @classmethod
+    def _from_row(cls, row):
+        return cls(*(decode(row[i], t)
+                     for i, (_, t) in enumerate(cls._FIELDS)))
+
+
+@dataclasses.dataclass(frozen=True)
+class ListTracksMissingPopularityRow:
+    """Result row of the ListTracksMissingPopularity query."""
 
     id: str
 
@@ -362,4 +381,4 @@ class ListTracksMissingEnergiesRow:
                      for i, (_, t) in enumerate(cls._FIELDS)))
 
 
-__all__ = ["Track", "Variant", "Latency", "Mix", "MixTrack", "LatencySummaryRow", "CountMixTracksByMixRow", "ListTrackSummariesRow", "ListDeckRowsRow", "GetTrackSummaryRow", "ListTracksMissingNativeEnvelopeRow", "ListTracksMissingDeckWaveformRow", "ListTrackStatusesRow", "ListTracksMissingEnergiesRow"]
+__all__ = ["Track", "Variant", "Latency", "Mix", "MixTrack", "LatencySummaryRow", "CountMixTracksByMixRow", "ListTrackSummariesRow", "ListDeckRowsRow", "GetTrackSummaryRow", "ListTracksMissingNativeEnvelopeRow", "ListTracksMissingPopularityRow", "ListTracksMissingDeckWaveformRow", "ListTrackStatusesRow", "ListTracksMissingEnergiesRow"]

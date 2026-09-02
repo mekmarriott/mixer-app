@@ -154,6 +154,7 @@ def create_app(run_ingestion=True, database=None, warmup_async=False):
             "license_flags": {"nd": t.license_nd, "sa": t.license_sa,
                               "nc": t.license_nc},
             "attribution": licensing.attribution(t),
+            "popularity": getattr(t, "popularity", None),
         }
         if grids is not None:
             row["grid_bpms"] = grids.get(t.id, [])

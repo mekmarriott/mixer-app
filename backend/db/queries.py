@@ -60,13 +60,13 @@ ON CONFLICT (id) DO UPDATE SET
     "ListTrackSummaries": """SELECT id, name, artist, genre, license,
        license_nd, license_sa, license_nc,
        mixable, native_bpm, camelot, duration_s, status,
-       outro_energy, intro_energy
+       outro_energy, intro_energy, popularity
 FROM tracks
 ORDER BY id""",
     "ListDeckRows": """SELECT id, name, artist, genre, license,
        license_nd, license_sa, license_nc,
        mixable, native_bpm, camelot, duration_s, status,
-       outro_energy, intro_energy, deck_waveform
+       outro_energy, intro_energy, deck_waveform, popularity
 FROM tracks
 ORDER BY id""",
     "GetTrackSummary": """SELECT id, name, artist, genre, license,
@@ -79,6 +79,8 @@ FROM tracks WHERE id = :id""",
     "ListTracksMissingNativeEnvelope": """SELECT id FROM tracks
 WHERE analysis_json IS NOT NULL AND native_envelope IS NULL
 ORDER BY id""",
+    "SetTrackPopularity": """UPDATE tracks SET popularity = :popularity WHERE id = :id""",
+    "ListTracksMissingPopularity": """SELECT id FROM tracks WHERE popularity IS NULL ORDER BY id""",
     "SetTrackDeckWaveform": """UPDATE tracks SET deck_waveform = :deck_waveform WHERE id = :id""",
     "ListTracksMissingDeckWaveform": """SELECT id FROM tracks
 WHERE analysis_json IS NOT NULL AND deck_waveform IS NULL
@@ -425,6 +427,23 @@ class Queries:
         rows = cur.fetchall()
         cur.close()
         return [models.ListTracksMissingNativeEnvelopeRow._from_row(r) for r in rows]
+
+    def set_track_popularity(self, popularity, id):
+        """`SetTrackPopularity` (:exec) -> None"""
+        params = {
+            "popularity": encode(popularity, "INTEGER", self._dialect),
+            "id": encode(id, "TEXT", self._dialect),
+        }
+        cur = self._execute("SetTrackPopularity", params)
+        cur.close()
+
+    def list_tracks_missing_popularity(self):
+        """`ListTracksMissingPopularity` (:many) -> list[ListTracksMissingPopularityRow]"""
+        params = {}
+        cur = self._execute("ListTracksMissingPopularity", params)
+        rows = cur.fetchall()
+        cur.close()
+        return [models.ListTracksMissingPopularityRow._from_row(r) for r in rows]
 
     def set_track_deck_waveform(self, deck_waveform, id):
         """`SetTrackDeckWaveform` (:exec) -> None"""

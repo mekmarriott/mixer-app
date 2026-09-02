@@ -394,7 +394,8 @@ function deckRow(meta, rec) {
   m.innerHTML = `<div class="deck-name"></div><div class="deck-artist"></div>`;
   m.querySelector(".deck-name").textContent = meta.name;
   m.querySelector(".deck-artist").textContent =
-    `${meta.artist} \u00b7 ${Math.round(meta.bpm)} BPM \u00b7 ${meta.camelot}`;
+    `${meta.artist} \u00b7 ${Math.round(meta.bpm)} BPM \u00b7 ${meta.camelot}` +
+    (meta.popularity ? ` \u00b7 ${formatPlays(meta.popularity)} plays` : "");
   li.appendChild(m);
 
   const tags = document.createElement("div");
@@ -520,6 +521,16 @@ async function addNextTrack(trackId) {
   updateTimes();
   requestDraw();
   await saveChain();
+}
+
+/**
+ * Listen counts run to eight figures, which is more precision than a deck row
+ * can use and more than fits beside the tempo and key.
+ */
+function formatPlays(n) {
+  if (n >= 1e6) return `${(n / 1e6).toFixed(n < 1e7 ? 1 : 0)}M`;
+  if (n >= 1e3) return `${(n / 1e3).toFixed(n < 1e4 ? 1 : 0)}k`;
+  return String(n);
 }
 
 /** The graded fade length of whichever marker a track was placed on. */
