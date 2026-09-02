@@ -165,6 +165,9 @@ async function saveChain() {
       track_id: t.id,
       delta_beats: beatsFor(t),
       grid_bpm: Math.round(gridBpmFor(t)),
+      // Stored with the chain because it decides when the PREVIOUS track goes
+      // silent, which is what bounds where a later track may start.
+      fade_s: t.fadeS ?? null,
     }));
     const saved = await api.putMixTracks(currentMixId, payload);
     mixNodeIds = saved.tracks.map((t) => t.node_id);
@@ -923,6 +926,7 @@ async function loadMix(id) {
     state.addTrack(mix, {
       id: meta.id, name: meta.name, artist: meta.artist,
       duration: wf.duration_s, bpm: entry.grid_bpm,
+      fadeS: entry.fade_s ?? null,
     }, entry.delta_s);
     mixNodeIds.push(entry.node_id);
   }
@@ -939,8 +943,11 @@ async function loadMix(id) {
       junctions.set(i, { markers: tr.markers, gridBpm: tr.grid_bpm });
       // Fade length is derived, not stored with the chain, so recover it from
       // the marker this junction sits on.
-      const startB = state.offsets(mix)[i + 1] - state.offsets(mix)[i];
-      mix.tracks[i + 1].fadeS = fadeForOffset(tr.markers, startB, tr);
+      // Only for chains written before the length was stored with them.
+      if (mix.tracks[i + 1].fadeS == null) {
+        const startB = state.offsets(mix)[i + 1] - state.offsets(mix)[i];
+        mix.tracks[i + 1].fadeS = fadeForOffset(tr.markers, startB, tr);
+      }
       if (i === mix.tracks.length - 2) currentTransition = tr;
     } catch { /* no shared grid for this pair: no markers to show */ }
   }));

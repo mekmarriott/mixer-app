@@ -80,7 +80,27 @@ class TestOverlapInvariant(unittest.TestCase):
     def test_mix_02_a_third_track_may_not_reach_the_first(self):
         with self.assertRaises(mixes.ChainError) as ctx:
             mixes.check_overlaps(self.entries([0, 20, 40]))   # t2 starts inside t0
-        self.assertIn("3 tracks on the grid", str(ctx.exception))
+        self.assertIn("still audible", str(ctx.exception))
+
+    def test_mix_02_a_faded_out_track_does_not_block(self):
+        """A track is over once its fade reaches zero, not when its audio ends.
+
+        t1 enters at 20s with a 5s fade, so t0 is silent from 25s. t2 starting
+        at 30s overlaps t0's remaining audio, but only two tracks are ever
+        heard — which is the thing the rule actually protects.
+        """
+        entries = self.entries([0, 20, 30])
+        entries[1]["fade_s"] = 5.0
+        entries[2]["fade_s"] = 5.0
+        mixes.check_overlaps(entries)          # must not raise
+
+    def test_mix_02_a_still_audible_track_does_block(self):
+        """The same geometry is refused while the fade is still running."""
+        entries = self.entries([0, 20, 30])
+        entries[1]["fade_s"] = 30.0            # t0 audible until 50s
+        entries[2]["fade_s"] = 5.0
+        with self.assertRaises(mixes.ChainError):
+            mixes.check_overlaps(entries)
 
     def test_mix_02_exact_abutment_is_legal(self):
         """Track 2 starting exactly as track 0 ends is two tracks, not three."""
@@ -192,7 +212,7 @@ class TestMixApi(unittest.TestCase):
             {"track_id": ids[2], "delta_beats": 41, "grid_bpm": 124},
         ]})
         self.assertEqual(r.status_code, 409)
-        self.assertIn("3 tracks on the grid", r.get_json()["detail"])
+        self.assertIn("still audible", r.get_json()["detail"])
 
     def test_mix_02_drag_cannot_create_a_three_way_overlap(self):
         ids = self._tracks()

@@ -124,7 +124,16 @@ CREATE TABLE IF NOT EXISTS mix_tracks (
     track_id    TEXT NOT NULL REFERENCES tracks (id) ON DELETE CASCADE,
     next_id     TEXT,
     delta_beats INTEGER NOT NULL,
-    grid_bpm    INTEGER NOT NULL
+    grid_bpm    INTEGER NOT NULL,
+    -- How long this track's fade-IN runs, which is also how long its
+    -- predecessor's fade-OUT runs — one crossfade, described once, owned by
+    -- the track being brought in.
+    --
+    -- Stored with the chain because it decides when the PREVIOUS track goes
+    -- silent, and that is what bounds legal placement. Re-deriving it would
+    -- mean re-scoring the junction on every chain read. NULL means "not
+    -- known", and callers then fall back to the track playing out in full.
+    fade_s      REAL
 );
 
 -- Supports the recommendation pre-filter (docs/latency-report.md §Projections):

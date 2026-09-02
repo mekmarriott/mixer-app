@@ -92,26 +92,57 @@ def to_transport(ordered, duration_of):
             "delta_s": delta_s,
             "offset_s": start,
             "grid_bpm": row.grid_bpm,
+            "fade_s": row.fade_s,
             "duration_s": duration_of(row.track_id, row.grid_bpm),
         })
     return out
 
 
-def check_overlaps(entries):
-    """Reject a chain where any track overlaps a NON-neighbour.
+def audible_end(entries, i):
+    """When track `i` actually falls silent.
 
-    Neighbours overlapping is the whole point — that is the crossfade. A track
-    reaching its second-nearest neighbour would put three tracks on the grid at
-    once, which the playback engine and the crossfade model both assume cannot
-    happen.
+    Its audio runs to offset + duration, but a successor crossfades it to zero
+    over the successor's fade length, and from that moment it contributes
+    nothing. That, not the end of its audio, is where the track ends as far as
+    the mix is concerned.
+
+    Falls back to the audio ending when the fade length is unknown, which is
+    the conservative direction: it can only refuse placements, never allow a
+    third track to be heard.
+    """
+    entry = entries[i]
+    own_end = entry["offset_s"] + entry["duration_s"]
+    if i + 1 >= len(entries):
+        return own_end
+    nxt = entries[i + 1]
+    overlap_start = max(entry["offset_s"], nxt["offset_s"])
+    if overlap_start >= own_end:
+        return own_end                      # they never overlap; it plays out
+    fade = nxt.get("fade_s")
+    if not fade:
+        return own_end
+    return min(own_end, overlap_start + fade)
+
+
+def check_overlaps(entries):
+    """Reject a chain that would put three tracks in the ear at once.
+
+    Neighbours overlapping is the whole point — that is the crossfade. What
+    cannot happen is a THIRD track arriving while two are still sounding.
+
+    The bound is the second-nearest predecessor's audible end, not the end of
+    its audio. Once its fade has taken it to zero it is silent, so a later
+    track may sit across whatever audio remains: three tracks may overlap in
+    time, and only two are ever heard. Measuring against the audio instead
+    reserved space for silence and refused placements that are perfectly fine.
     """
     for i in range(len(entries) - MAX_SIMULTANEOUS):
         far = entries[i + MAX_SIMULTANEOUS]
-        end_i = entries[i]["offset_s"] + entries[i]["duration_s"]
-        if far["offset_s"] < end_i - 1e-6:
+        if far["offset_s"] < audible_end(entries, i) - 1e-6:
             raise ChainError(
-                f"track {far['track_id']} would overlap {entries[i]['track_id']}, "
-                f"putting {MAX_SIMULTANEOUS + 1} tracks on the grid at once")
+                f"track {far['track_id']} would start while "
+                f"{entries[i]['track_id']} is still audible, "
+                f"putting {MAX_SIMULTANEOUS + 1} tracks in the ear at once")
     return entries
 
 
@@ -134,15 +165,12 @@ def min_delta_beats(entries, index):
     floor_s = prev_start
 
     if index >= MAX_SIMULTANEOUS:
-        before = entries[index - MAX_SIMULTANEOUS]
-        floor_s = max(floor_s, before["offset_s"] + before["duration_s"])
+        floor_s = max(floor_s, audible_end(entries, index - MAX_SIMULTANEOUS))
 
     nxt = entries[index + 1] if index + 1 < len(entries) else None
     if nxt is not None and index >= 1:
-        prev = entries[index - 1]
-        # successor_start = this_start + successor_delta  >=  prev_end
-        floor_s = max(floor_s,
-                      prev["offset_s"] + prev["duration_s"] - nxt["delta_s"])
+        # successor_start = this_start + successor_delta >= prev's audible end
+        floor_s = max(floor_s, audible_end(entries, index - 1) - nxt["delta_s"])
 
     return max(0, seconds_to_beats(floor_s - prev_start, grid))
 
@@ -222,7 +250,8 @@ class MixRepository:
                 q.upsert_mix_track(
                     id=node_ids[i], mix_id=mix_id, track_id=t["track_id"],
                     next_id=node_ids[i + 1] if i + 1 < len(node_ids) else None,
-                    delta_beats=int(t["delta_beats"]), grid_bpm=int(t["grid_bpm"]))
+                    delta_beats=int(t["delta_beats"]), grid_bpm=int(t["grid_bpm"]),
+                    fade_s=t.get("fade_s"))
             q.set_mix_head(id=mix_id, head_id=node_ids[0] if node_ids else None,
                            updated_at=now)
         return node_ids

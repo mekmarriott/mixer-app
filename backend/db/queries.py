@@ -41,13 +41,15 @@ ON CONFLICT (id) DO UPDATE SET
     "ListMixTracks": """SELECT * FROM mix_tracks WHERE mix_id = :mix_id""",
     "CountMixTracksByMix": """SELECT mix_id, COUNT(*) AS n FROM mix_tracks GROUP BY mix_id""",
     "GetMixTrack": """SELECT * FROM mix_tracks WHERE id = :id""",
-    "UpsertMixTrack": """INSERT INTO mix_tracks (id, mix_id, track_id, next_id, delta_beats, grid_bpm)
-VALUES (:id, :mix_id, :track_id, :next_id, :delta_beats, :grid_bpm)
+    "UpsertMixTrack": """INSERT INTO mix_tracks (id, mix_id, track_id, next_id, delta_beats, grid_bpm,
+                        fade_s)
+VALUES (:id, :mix_id, :track_id, :next_id, :delta_beats, :grid_bpm, :fade_s)
 ON CONFLICT (id) DO UPDATE SET
     track_id    = EXCLUDED.track_id,
     next_id     = EXCLUDED.next_id,
     delta_beats = EXCLUDED.delta_beats,
-    grid_bpm    = EXCLUDED.grid_bpm""",
+    grid_bpm    = EXCLUDED.grid_bpm,
+    fade_s      = EXCLUDED.fade_s""",
     "SetMixTrackDelta": """UPDATE mix_tracks SET delta_beats = :delta_beats WHERE id = :id""",
     "SetMixTrackNext": """UPDATE mix_tracks SET next_id = :next_id WHERE id = :id""",
     "DeleteMixTrack": """DELETE FROM mix_tracks WHERE id = :id""",
@@ -295,7 +297,7 @@ class Queries:
         cur.close()
         return None if row is None else models.MixTrack._from_row(row)
 
-    def upsert_mix_track(self, id, mix_id, track_id, next_id, delta_beats, grid_bpm):
+    def upsert_mix_track(self, id, mix_id, track_id, next_id, delta_beats, grid_bpm, fade_s):
         """`UpsertMixTrack` (:exec) -> None"""
         params = {
             "id": encode(id, "TEXT", self._dialect),
@@ -304,6 +306,7 @@ class Queries:
             "next_id": encode(next_id, "TEXT", self._dialect),
             "delta_beats": encode(delta_beats, "INTEGER", self._dialect),
             "grid_bpm": encode(grid_bpm, "INTEGER", self._dialect),
+            "fade_s": encode(fade_s, "REAL", self._dialect),
         }
         cur = self._execute("UpsertMixTrack", params)
         cur.close()

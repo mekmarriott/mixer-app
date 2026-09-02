@@ -163,11 +163,37 @@ export function overlapsFor(mix, i) {
 export const MAX_SIMULTANEOUS = 2;
 
 /**
+ * When the track at `i` actually falls silent.
+ *
+ * Its audio runs to offset + duration, but a successor crossfades it to zero
+ * over the successor's fade length, and after that it contributes nothing.
+ * That is where the track ends as far as the mix is concerned — which is why
+ * three tracks may overlap in time while only two are ever heard.
+ *
+ * Mirrors backend/mixes.audible_end, so a drag is clamped to exactly what the
+ * API will accept.
+ */
+export function audibleEnd(mix, i) {
+  const t = mix.tracks[i];
+  if (!t) return 0;
+  const offs = offsets(mix);
+  const ownEnd = offs[i] + t.duration;
+  const next = mix.tracks[i + 1];
+  if (!next) return ownEnd;
+  const overlapStart = Math.max(offs[i], offs[i + 1]);
+  if (overlapStart >= ownEnd) return ownEnd;   // they never overlap
+  const fade = next.fadeS ?? defaultFadeS(next.bpm || t.bpm);
+  if (!fade) return ownEnd;                    // unknown: assume it plays out
+  return Math.min(ownEnd, overlapStart + fade);
+}
+
+/**
  * Smallest legal absolute start for the track at `index`.
  *
  * Three constraints, all consequences of the same rule:
  *   - it may not start before its predecessor (that would reorder the mix);
- *   - it may not reach back into its second-nearest predecessor;
+ *   - it may not start while its second-nearest predecessor is still AUDIBLE
+ *     (its remaining silent audio is free to overlap);
  *   - dragging it earlier drags its successor with it (rigid ripple), so the
  *     successor must not reach back into *its* second-nearest predecessor.
  */
@@ -178,12 +204,11 @@ export function minOffsetFor(mix, index) {
   let floor = offs[index - 1];
 
   const back = index - MAX_SIMULTANEOUS;
-  if (back >= 0) floor = Math.max(floor, offs[back] + tracks[back].duration);
+  if (back >= 0) floor = Math.max(floor, audibleEnd(mix, back));
 
   const next = tracks[index + 1];
   if (next) {
-    const prev = tracks[index - 1];
-    floor = Math.max(floor, offs[index - 1] + prev.duration - (next.delta ?? 0));
+    floor = Math.max(floor, audibleEnd(mix, index - 1) - (next.delta ?? 0));
   }
   return Math.max(0, floor);
 }

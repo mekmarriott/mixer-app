@@ -133,10 +133,11 @@ class MixTrack:
     next_id: str
     delta_beats: int
     grid_bpm: int
+    fade_s: float
 
     _FIELDS = (
         ("id", "TEXT"), ("mix_id", "TEXT"), ("track_id", "TEXT"), ("next_id", "TEXT"),
-        ("delta_beats", "INTEGER"), ("grid_bpm", "INTEGER"),
+        ("delta_beats", "INTEGER"), ("grid_bpm", "INTEGER"), ("fade_s", "REAL"),
     )
 
     @classmethod
