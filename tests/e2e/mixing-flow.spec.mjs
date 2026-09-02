@@ -120,3 +120,35 @@ test.describe("deck and two-track mixing state", () => {
     }
   });
 });
+
+test.describe("transition markers across a chain", () => {
+  test("P4-21b every junction keeps its own markers, not just the newest", async ({ page }) => {
+    await bootApp(page);
+    await addFirstTrack(page);
+    await addSecondTrack(page);
+
+    const twoTrack = await sampleTimelineWhenDrawn(page, { expectTrack2: true });
+    const firstJunction = countMarkerClusters(twoTrack.markerColumns);
+    expect(firstJunction).toBeGreaterThan(0);
+
+    // Add a third track: the new junction gets markers, and — the regression
+    // this guards — the first junction must not lose its own.
+    if (!(await page.locator(DRAGGABLE_ROW).count())) test.skip();
+    await dragRowToTimeline(page, page.locator(DRAGGABLE_ROW).first());
+    await expect(page.locator("#attributions span")).toHaveCount(3);
+
+    // Reload so the viewport spans the whole mix and both junctions are drawn.
+    await page.reload();
+    await expect(page.locator("#deck .deck-row").first()).toBeVisible({ timeout: 60_000 });
+    await page.waitForLoadState("networkidle");
+
+    const threeTrack = await sampleTimelineWhenDrawn(page, { expectTrack2: true });
+    const allJunctions = countMarkerClusters(threeTrack.markerColumns);
+
+    // Markers from two junctions, spread across the mix rather than clustered
+    // at one point.
+    expect(allJunctions).toBeGreaterThan(firstJunction);
+    const cols = threeTrack.markerColumns;
+    expect(cols[cols.length - 1] - cols[0]).toBeGreaterThan(threeTrack.width * 0.25);
+  });
+});

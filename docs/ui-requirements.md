@@ -20,6 +20,8 @@
 
 ### Player Cursor
 - [ ] Controls audio playback: moving/clicking it seeks playback to that point in time
+- [ ] **Draggable whether playing or paused**, and grabbable even where it sits over a track — the strip along the top of the Track Window is a scrub ruler. Scrubbing while playing pauses for the duration of the gesture and resumes from where it is released
+- [ ] **Separate from track dragging.** Grabbing the playhead never moves a track; dragging a track never moves the playhead
 - [ ] Animates automatically across the Track Window in sync with elapsed time during playback
 
 ### Nav Bar (timeline overview control)
@@ -50,6 +52,7 @@ Triggered when a Suggested Song Deck candidate is dropped onto the Track Window.
 - [ ] Rendered as arrow/marker indicators at the top of the Track Window, positioned at candidate transition start points for Track 2
 - [ ] **Marker size is proportional to the compatibility/overlap score at that point** — a direct visual encoding of the Phase 3 scoring curve, not a fixed-size icon. Scaled **relative to the candidates on screen** (weakest at the smallest size, strongest at the largest): scores for one pair cluster in a narrow band, and an absolute scale renders them indistinguishable
 - [ ] Multiple markers can appear simultaneously (mockup shows 3), representing multiple candidate start points, not just the single best one
+- [ ] **Every junction in the chain keeps its own markers.** A mix of N tracks has N-1 junctions; adding a track must not erase the transition points of the ones before it
 
 ### Free-drag alignment behavior
 - [ ] The user can drag a track to a non-marked point, not just the pre-scored markers — but every placement lands on the beat grid; positions between beats are not reachable

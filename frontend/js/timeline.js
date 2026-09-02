@@ -21,6 +21,13 @@ export const COLORS = {
 };
 
 const MARKER_LANE_H = 30;
+// Playhead handle, in CSS px. GRAB_PX is how close the pointer must be
+// horizontally to grab the playhead instead of the track underneath.
+const CURSOR_HANDLE_W = 13;
+const CURSOR_HANDLE_H = 12;
+export const CURSOR_GRAB_PX = 9;
+/** The strip along the top: markers plus the playhead ruler, never tracks. */
+export const RULER_H = MARKER_LANE_H;
 
 // A 100-track mix needs more than the two mandated hues. Magenta and blue stay
 // first and second (ui-requirements mandates them for tracks 1 and 2); the rest
@@ -41,7 +48,7 @@ export class Timeline {
     this.vp = vp;             // navbar.js viewport (shared)
     this.mix = null;
     this.waveforms = new Map(); // trackId -> {points, duration_s, beat_grid}
-    this.markers = [];
+    this.markerGroups = [];
     this.cursor = 0;
     this.hoverMarker = null;
     this.dpr = window.devicePixelRatio || 1;
@@ -49,7 +56,16 @@ export class Timeline {
 
   setMix(mix) { this.mix = mix; }
   setWaveform(id, wf) { this.waveforms.set(id, wf); }
-  setMarkers(m, origin = null) { this.markers = m || []; this.markerOrigin = origin; }
+  /**
+   * Marker groups, one per junction: `[{ origin, markers }]` where `origin` is
+   * the absolute start of the junction's LEFT track (marker `a_start_s` is
+   * relative to it).
+   *
+   * A chain of N tracks has N-1 junctions and every one of them has candidate
+   * transition points. Holding a single set meant adding a track silently
+   * erased the previous junction's markers.
+   */
+  setMarkerGroups(groups) { this.markerGroups = groups || []; }
   setCursor(t) { this.cursor = t; }
 
   resize() {
@@ -155,35 +171,45 @@ export class Timeline {
     ctx.strokeStyle = "rgba(255,194,75,0.25)";
     ctx.lineWidth = 1 * dpr;
     ctx.beginPath(); ctx.moveTo(0, laneH - 0.5 * dpr); ctx.lineTo(W, laneH - 0.5 * dpr); ctx.stroke();
-    const aOffset = this.markerOrigin ?? offs[0] ?? 0;
-    // Size relative to the candidates actually on offer: scores for one pair
-    // cluster in a narrow band, so an absolute scale renders them identical.
-    const scoreSet = this.markers.map((m) => m.score);
-    for (const m of this.markers) {
-      const t = m.a_start_s + aOffset;
-      const x = timeToPx(this.vp, t, W);
-      if (x < 0 || x > W) continue;
-      const size = markerSizePx(m.score, 10, 26, scoreSet) * dpr;
-      ctx.fillStyle = COLORS.marker;
-      ctx.globalAlpha = m === this.hoverMarker ? 1 : 0.85;
-      ctx.beginPath();
-      ctx.moveTo(x, laneH - 2 * dpr);
-      ctx.lineTo(x - size * 0.38, laneH - 2 * dpr - size);
-      ctx.lineTo(x + size * 0.38, laneH - 2 * dpr - size);
-      ctx.closePath();
-      ctx.fill();
-      ctx.globalAlpha = 1;
+    for (const group of this.markerGroups) {
+      const origin = group.origin ?? 0;
+      // Size relative to the candidates within THIS junction: that is the
+      // comparison a user makes ("which of these is the best exit from this
+      // track?"). Normalising across junctions would compare unlike pairs.
+      const scoreSet = group.markers.map((m) => m.score);
+      for (const m of group.markers) {
+        const x = timeToPx(this.vp, m.a_start_s + origin, W);
+        if (x < 0 || x > W) continue;
+        const size = markerSizePx(m.score, 10, 26, scoreSet) * dpr;
+        ctx.fillStyle = COLORS.marker;
+        ctx.globalAlpha = m === this.hoverMarker ? 1 : 0.85;
+        ctx.beginPath();
+        ctx.moveTo(x, laneH - 2 * dpr);
+        ctx.lineTo(x - size * 0.38, laneH - 2 * dpr - size);
+        ctx.lineTo(x + size * 0.38, laneH - 2 * dpr - size);
+        ctx.closePath();
+        ctx.fill();
+        ctx.globalAlpha = 1;
+      }
     }
 
-    // Player cursor (P4-05..07).
+    // Player cursor (P4-06, P4-07). The handle is deliberately chunky: it is a
+    // drag target, and a 1px line is not one.
     const cx = timeToPx(this.vp, this.cursor, W);
-    if (cx >= 0 && cx <= W) {
+    if (cx >= -CURSOR_HANDLE_W * dpr && cx <= W + CURSOR_HANDLE_W * dpr) {
       ctx.strokeStyle = COLORS.cursor;
       ctx.lineWidth = 1.5 * dpr;
       ctx.beginPath(); ctx.moveTo(cx, 0); ctx.lineTo(cx, H); ctx.stroke();
-      ctx.fillStyle = COLORS.cursor;
+      ctx.fillStyle = this.cursorHot ? "#ffffff" : COLORS.cursor;
+      const hw = (CURSOR_HANDLE_W / 2) * dpr;
+      const hh = CURSOR_HANDLE_H * dpr;
+      // Pentagon: a flat cap that is easy to hit, tapering to the exact time.
       ctx.beginPath();
-      ctx.moveTo(cx - 5 * dpr, 0); ctx.lineTo(cx + 5 * dpr, 0); ctx.lineTo(cx, 7 * dpr);
+      ctx.moveTo(cx - hw, 0);
+      ctx.lineTo(cx + hw, 0);
+      ctx.lineTo(cx + hw, hh * 0.6);
+      ctx.lineTo(cx, hh);
+      ctx.lineTo(cx - hw, hh * 0.6);
       ctx.closePath(); ctx.fill();
     }
   }
@@ -203,8 +229,23 @@ export class Timeline {
 
   // Hit-testing helpers used by app.js pointer handlers.
   pxToTimeLocal(px) { return pxToTime(this.vp, px * this.dpr, this.canvas.width); }
+
+  /**
+   * Is the pointer on the playhead?
+   *
+   * Checked BEFORE track hit-testing, so the playhead stays reachable even
+   * when it sits over a track — which, once a mix has tracks, is everywhere.
+   */
+  cursorAtPoint(px) {
+    const cx = timeToPx(this.vp, this.cursor, this.canvas.width) / this.dpr;
+    return Math.abs(px - cx) <= CURSOR_GRAB_PX;
+  }
   trackAtPoint(px, py) {
     if (!this.mix) return null;
+    // The top lane belongs to the markers and the playhead ruler. Ignoring py
+    // meant a click up there grabbed the track underneath, which made the
+    // playhead impossible to reach.
+    if (py != null && py < MARKER_LANE_H) return null;
     const t = this.pxToTimeLocal(px);
     const offs = offsets(this.mix);
     // Later track wins where two overlap: in a chain the newer one sits on top.

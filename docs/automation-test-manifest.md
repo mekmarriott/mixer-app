@@ -19,7 +19,7 @@ grep -rhoE "P[1-4]-[0-9]{2}" tests/ | sort -u
 |---|---|---|---|---|
 | **Backend** | `unittest` (stdlib) | 128 | ~8 s | Pipeline, compliance gates, API contract, startup precompute and DB concurrency. Builds a real 5-track fixture catalog through one full ingestion. |
 | **Frontend logic** | `node:test` (stdlib) | 66 | <1 s | The pure interaction modules (`state`, `align`, `crossfade`, `navbar`, `deck`, `attribution`, `boot`) — no DOM, no WebAudio. |
-| **Browser** | Playwright + Chromium | 19 | ~27 s | What the other two structurally cannot reach: native drag-and-drop, canvas pixels, the WebAudio clock, and real network behaviour. |
+| **Browser** | Playwright + Chromium | 24 | ~40 s | What the other two structurally cannot reach: native drag-and-drop, canvas pixels, the WebAudio clock, and real network behaviour. |
 | **Manual** | a human with ears | 1 | — | Perceptual judgement only. |
 
 ```bash
@@ -101,8 +101,12 @@ manual sign-off list in `design-document.md` §12 before Playwright existed.
 | **P4-04** | **Drag fetches nothing; position write is coalesced** | **Browser** | `P4-04 dragging fetches nothing; it only writes the new position` |
 | **P4-05a** | **Title editable inline** | **Browser** | `P4-05a title is editable inline` |
 | P4-05b | Title persists on reload | **Browser** | `P4-05b title persists across a reload` — gap closed, see below |
-| **P4-06** | **Click/drag the cursor seeks playback** | **Browser** | `P4-06 clicking the track window seeks playback to that time` |
+| **P4-06** | **Click/drag the cursor seeks playback** | **Browser** | `P4-06 clicking the track window seeks playback to that time` · `PH-01`, `PH-02` |
 | **P4-07** | **Cursor tracks playback, stops when paused** | **Browser** | `P4-07 cursor advances while playing and holds when paused` |
+| PH-01 | The playhead is draggable while paused, even over a track | Browser | `PH-01 the playhead can be dragged while paused, over a track` |
+| PH-02 | The playhead is draggable while playing, and playback resumes | Browser | `PH-02 the playhead can be dragged WHILE PLAYING and playback resumes` |
+| PH-03 | The scrub ruler does not hijack track dragging | Browser | `PH-03 the ruler does not hijack track dragging` |
+| PH-04 | Dragging a track does not move the playhead | Browser | `PH-04 dragging a track does not move the playhead` |
 | P4-08 | Resizing the nav segment zooms | Logic | `P4-08: dragging the right edge resizes -> zooms proportionally`, `…left edge…` |
 | P4-09 | Dragging the nav segment pans without zooming | Logic | `P4-09: dragging the segment pans without changing zoom`, `…clamps at the right edge…` |
 | **P4-10** | **Track 2 draggable on x; timing follows** | **Browser** | `P4-10 track 2 can be dragged along the x-axis and mix timing follows` |
@@ -118,6 +122,7 @@ manual sign-off list in `design-document.md` §12 before Playwright existed.
 | P4-19 | Overlap adjustable after the snap | Logic | `P4-19: overlap boundaries adjust when track 2 is dragged` |
 | P4-20 | Marker size scales with score, relative to the on-screen set | Logic | `P4-20: marker size is scaled RELATIVE to the candidates on screen`, `…all-equal scores render uniformly…`, `…size is bounded and clamps out-of-range scores` |
 | **P4-21** | **Multiple markers render simultaneously** | **Browser** | `P4-21 multiple transition markers render simultaneously` |
+| **P4-21b** | **Every junction keeps its own markers** | **Browser** | `P4-21b every junction keeps its own markers, not just the newest` |
 | P4-22 | Free placement away from markers | Logic | `P4-22: drag far from every attractor is unchanged (free placement)` |
 | P4-23 | Every placement lands on the beat grid | Logic | `P4-23: a placement away from any marker lands on the nearest beat`, `P4-23: NO placement can leave beats misaligned`, `P4-23: a marker within reach wins over the plain beat grid` |
 | P4-24 | Snapping never drags a placement onto a distant marker | Logic | `P4-24: a deliberate placement is not dragged onto a distant marker` |

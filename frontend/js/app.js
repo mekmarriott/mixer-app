@@ -6,7 +6,7 @@ import * as nav from "./navbar.js";
 import { rankRecommendations, scorePercent, piePath } from "./deck.js";
 import * as boot from "./boot.js";
 import { attributionParts, licenseBadges } from "./attribution.js";
-import { Timeline, COLORS, trackColor } from "./timeline.js";
+import { Timeline, COLORS, trackColor, RULER_H } from "./timeline.js";
 import { Player } from "./audio.js";
 
 const $ = (sel) => document.querySelector(sel);
@@ -18,11 +18,12 @@ timeline.setMix(mix);
 const player = new Player();
 
 let catalog = [];
-let currentMarkers = [];
 let currentTransition = null;
 let gridBpm = null;
-// Index of the track being dragged, and the markers/grid that apply to it.
-let markerOriginIndex = 0;
+// Markers for EVERY junction, keyed by the index of the junction's left track.
+// A chain of N tracks has N-1 junctions and each has its own candidates; one
+// shared list meant adding a track erased the previous junction's markers.
+const junctions = new Map();
 let currentMixId = null;
 let mixNodeIds = [];        // chain node ids, parallel to mix.tracks
 let saveTimer = null;
@@ -303,8 +304,8 @@ async function addNextTrack(trackId) {
   const a = mix.tracks[lastIndex];
   const tr = await api.transitions(a.id, trackId);
   currentTransition = tr;
-  currentMarkers = tr.markers;
   gridBpm = tr.grid_bpm;
+  const currentMarkers = tr.markers;
 
   // Both tracks move to the shared-grid variants (Phase 4: no live stretch).
   const [wfA, wfB] = await Promise.all([
@@ -324,9 +325,9 @@ async function addNextTrack(trackId) {
   }, align.snapOffset(currentMarkers));
   if (!res.ok) return toast(res.reason);
 
-  markerOriginIndex = lastIndex;
+  junctions.set(lastIndex, { markers: currentMarkers, gridBpm });
   timeline.setWaveform(meta.id, wfB);
-  timeline.setMarkers(currentMarkers, state.offsets(mix)[lastIndex]);
+  syncMarkerGroups();
   nav.setTotal(vp, state.totalDuration(mix));
   // Follow the edit: in a long mix the new junction is usually outside the
   // current view, and a marker lane you cannot see is no use.
@@ -366,12 +367,46 @@ wrap.addEventListener("drop", async (e) => {
   else await addNextTrack(id);
 });
 
-// Drag track 2 along the x-axis with magnetic pull; click empty space seeks.
+// Two independent drags share this canvas:
+//   * the PLAYHEAD, grabbed by its handle — scrubs the play position;
+//   * a TRACK, grabbed by its waveform — moves it in time (rigid ripple).
+// The playhead is hit-tested first and is NOT beat-snapped: it is a viewing
+// position, not a musical one, and quantising it would make fine seeking
+// impossible. Clicking bare canvas still seeks, as before.
 let dragging = null;
+let scrubbing = null;
 const tlCanvas = $("#timeline");
+function seekTo(t) {
+  const clamped = Math.max(0, Math.min(t, state.totalDuration(mix)));
+  timeline.setCursor(clamped);
+  player.seek(mix, clamped);
+  updateTimes();
+  requestDraw();
+  return clamped;
+}
+
 tlCanvas.addEventListener("pointerdown", (e) => {
   const rect = tlCanvas.getBoundingClientRect();
   const px = e.clientX - rect.left;
+
+  const localY = e.clientY - rect.top;
+  // The playhead wins over whatever is beneath it — once a mix has tracks, it
+  // is always over one, and it has to stay reachable. The top strip is also a
+  // scrub ruler, so the playhead can be moved even when it is off-screen.
+  if (timeline.cursorAtPoint(px) || localY < RULER_H) {
+    // Stop the transport for the duration of the scrub so audio does not run
+    // away from the handle, and resume from wherever it is released.
+    scrubbing = { wasPlaying: player.playing };
+    if (player.playing) {
+      player.stop();
+      $("#btn-play").innerHTML = "&#9654;";
+    }
+    tlCanvas.classList.add("scrubbing");
+    tlCanvas.setPointerCapture(e.pointerId);
+    seekTo(timeline.pxToTimeLocal(px));
+    return;
+  }
+
   const idx = timeline.trackAtPoint(px, e.clientY - rect.top);
   // Any track after the first can be dragged; the first anchors the mix.
   if (idx !== null && idx > 0) {
@@ -384,22 +419,38 @@ tlCanvas.addEventListener("pointerdown", (e) => {
     tlCanvas.setPointerCapture(e.pointerId);
   } else {
     // Seek (P4-06): cursor moves to the tapped position.
-    const t = Math.max(0, Math.min(timeline.pxToTimeLocal(px), state.totalDuration(mix)));
-    timeline.setCursor(t);
-    player.seek(mix, t);
-    updateTimes();
-    requestDraw();
+    seekTo(timeline.pxToTimeLocal(px));
   }
 });
 tlCanvas.addEventListener("pointermove", (e) => {
-  if (!dragging) return;
   const rect = tlCanvas.getBoundingClientRect();
+  const localX = e.clientX - rect.left;
+
+  if (scrubbing) {
+    seekTo(timeline.pxToTimeLocal(localX));
+    return;
+  }
+
+  // Hover affordance: the handle lights up and the cursor changes, so it is
+  // discoverable that the playhead can be grabbed at all.
+  if (!dragging) {
+    const hot = timeline.cursorAtPoint(localX);
+    if (hot !== timeline.cursorHot) {
+      timeline.cursorHot = hot;
+      tlCanvas.style.cursor = hot ? "ew-resize" : "";
+      requestDraw();
+    }
+    return;
+  }
+  if (!dragging) return;
   const proposed = timeline.pxToTimeLocal(e.clientX - rect.left) - dragging.grabDelta;
 
   // HARD beat snap: a marker in reach wins, otherwise the nearest beat. There
   // is no off-grid resting place, so a drag can never leave beats misaligned.
-  const markers = dragging.index === markerOriginIndex + 1 ? currentMarkers : [];
-  const snapped = align.snapOffsetTo(proposed, markers, beatAttractors(), gridBpm);
+  // Markers come from THIS track's own junction, so every track in the chain
+  // snaps to its own candidates — not just the most recently added one.
+  const snapped = align.snapOffsetTo(
+    proposed, markersForTrack(dragging.index), beatAttractors(), gridBpm);
 
   // At most two tracks may overlap: clamp before storing, so the drag simply
   // stops rather than producing a state the API would reject.
@@ -418,6 +469,17 @@ tlCanvas.addEventListener("pointermove", (e) => {
   requestDraw();
 });
 tlCanvas.addEventListener("pointerup", () => {
+  if (scrubbing) {
+    // Resume only if the transport was running when the scrub began — a
+    // paused scrub stays paused at the new position.
+    if (scrubbing.wasPlaying) {
+      player.play(mix, timeline.cursor);
+      $("#btn-play").innerHTML = "&#10074;&#10074;";
+    }
+    scrubbing = null;
+    tlCanvas.classList.remove("scrubbing");
+    return;
+  }
   if (!dragging) return;
   flushMixSave();
   dragging = null;
@@ -592,11 +654,10 @@ async function refreshMixList(selectId = currentMixId) {
 async function showZeroState() {
   mix.tracks.length = 0;
   mixNodeIds = [];
-  currentMarkers = [];
+  junctions.clear();
   currentTransition = null;
   gridBpm = null;
-  markerOriginIndex = 0;
-  timeline.setMarkers([], null);
+  timeline.setMarkerGroups([]);
   timeline.waveforms.clear();
   player.stop();
   $("#btn-play").disabled = true;
@@ -630,6 +691,7 @@ async function loadMix(id) {
 
   mix.tracks.length = 0;
   mixNodeIds = [];
+  junctions.clear();
   timeline.waveforms.clear();
   gridBpm = data.tracks[data.tracks.length - 1].grid_bpm || null;
 
@@ -647,18 +709,18 @@ async function loadMix(id) {
 
   await Promise.all(mix.tracks.map((t) => player.load(t.id, t.bpm)));
 
-  // Markers for the final junction, so the next drop has somewhere to snap.
+  // Markers for EVERY junction, not just the last: a resumed mix must show the
+  // same transition points it had when it was built. The curve is prefix-sum
+  // backed (~1ms server-side) so fetching them in parallel is cheap.
   const last = mix.tracks[mix.tracks.length - 1];
-  if (mix.tracks.length >= 2) {
-    const prev = mix.tracks[mix.tracks.length - 2];
+  await Promise.all(mix.tracks.slice(0, -1).map(async (trk, i) => {
     try {
-      const tr = await api.transitions(prev.id, last.id);
-      currentTransition = tr;
-      currentMarkers = tr.markers;
-      markerOriginIndex = mix.tracks.length - 2;
-      timeline.setMarkers(currentMarkers, state.offsets(mix)[markerOriginIndex]);
-    } catch { /* no shared grid: no markers to show */ }
-  }
+      const tr = await api.transitions(trk.id, mix.tracks[i + 1].id);
+      junctions.set(i, { markers: tr.markers, gridBpm: tr.grid_bpm });
+      if (i === mix.tracks.length - 2) currentTransition = tr;
+    } catch { /* no shared grid for this pair: no markers to show */ }
+  }));
+  syncMarkerGroups();
 
   $("#drop-hint").classList.add("hidden");
   $("#btn-play").disabled = false;
@@ -724,6 +786,22 @@ $("#btn-credits").addEventListener("click", async () => {
 // The server binds its port before the catalog exists, so the client waits on
 // /api/status and shows progress. Nothing catalog-backed is fetched or drawn
 // until warmup reports ready — the user never sees a half-built page.
+/** Push every junction's markers to the renderer, with its own origin. */
+function syncMarkerGroups() {
+  const offs = state.offsets(mix);
+  const groups = [];
+  for (const [leftIndex, data] of junctions) {
+    if (leftIndex >= mix.tracks.length - 1) continue;   // junction no longer exists
+    groups.push({ origin: offs[leftIndex] ?? 0, markers: data.markers });
+  }
+  timeline.setMarkerGroups(groups);
+}
+
+/** Markers that govern where track `index` may start (its left junction). */
+function markersForTrack(index) {
+  return junctions.get(index - 1)?.markers ?? [];
+}
+
 function paintBootOverlay(status) {
   $("#boot-message").textContent = boot.statusMessage(status);
   $("#boot-detail").textContent = boot.statusDetail(status);

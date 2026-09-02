@@ -322,3 +322,6 @@ main { flex: 1; display: flex; flex-direction: column; padding: 16px 22px; gap: 
   min-width: 54px;
 }
 .mix-saved.saving { color: var(--gold); }
+
+/* The playhead is a drag target, so say so on hover and while scrubbing. */
+.track-window.scrubbing { cursor: ew-resize; }
