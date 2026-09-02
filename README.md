@@ -79,6 +79,31 @@ Only tracks with `audiodownload_allowed=true` are accepted; each track's CC
 license is read from the API and every variant (BY / -SA / -NC / -ND /
 -NC-SA / -NC-ND) is stored and enforced.
 
+#### Building a catalog from a community listing
+
+Hand-curating ids does not scale past a playlist, and the Jamendo community
+pages are client-rendered infinite scroll, so there is no list in the HTML to
+copy. `make discover` asks the API for the same listing instead:
+
+```bash
+make discover COUNT=200 TAG=electronic OUT=config/tracks.electronic.json
+make discover COUNT=1000 OUT=config/tracks.all.json          # every genre
+DJMIXER_TRACKS=config/tracks.electronic.json make ingest
+```
+
+`COUNT` is how many *ingestible* tracks to collect, not how many rows to read.
+ND-licensed and non-downloadable tracks are filtered out during discovery, so
+200 means 200 tracks that will actually render variants — worth knowing,
+because roughly half of a typical Jamendo listing is ND and would be refused
+at the licence gate after being counted.
+
+Discovered entries carry `"genre": "auto"`. The field is a *tempo band* that
+selects the BPM grid, the API exposes no usable tempo, and
+`bpm_grid.resolve_bucket` derives it from the analysed BPM at ingest time.
+Do not substitute a fixed band: `grid_points` answers an out-of-band request
+with an empty list rather than an error, so every track outside that one band
+would be downloaded, analysed, stored, and left with no variants at all.
+
 ## Using the app
 
 0. The opening deck browses by genre (top 5 each) — nothing is ranked yet,

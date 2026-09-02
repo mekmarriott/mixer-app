@@ -188,6 +188,98 @@ Concurrency control differs by design: no write lock is taken, because MVCC and
 (`40001`), deadlocks (`40P01`) and dropped connections are retried by
 `Database.run`.
 
+### Pushing the catalog to a remote database
+
+Ingestion runs locally and the deployed app reads Supabase, so the rows have to
+cross that gap:
+
+```bash
+make push-metadata-dry      # connect, verify the schema, write nothing
+make push-metadata          # upsert tracks + variants
+```
+
+Both wrap `python -m backend.db.sync`, which reads `--from` (default: the
+SQLite catalog under `$DJMIXER_DATA`, since that is where a local ingest run
+accumulates) and writes `--to`, defaulting to the first of
+`DJMIXER_REMOTE_DATABASE_URL`, `MIX_DB_POSTGRES_URL` or `POSTGRES_URL` that is
+set — the last two being what the Supabase integration puts in the
+environment.
+
+Only `tracks` and `variants` move. `mixes`/`mix_tracks` belong to whichever
+deployment created them and `latency` is local instrumentation, so neither is
+copied. Audio objects are not uploaded either: the rows carry `audio_key` and
+`object_key`, and putting the bytes behind those keys is the publisher's job.
+
+The push **upserts and never prunes**. A locally deleted track stays in the
+remote catalog, deliberately: a partially ingested local catalog is the normal
+state (ingestion is resumable), and treating it as authoritative for deletion
+would let one interrupted run empty production.
+
+Do not point `SOURCE` at the local PostgreSQL without checking what is in it.
+It is the development and test database, and the suites leave synthetic fixture
+tracks (ids `1001`, `2001`, `9999`, ...) behind in it.
+
+### Keeping the catalog and the blob store in agreement
+
+Pushing metadata and publishing objects are separate steps, so they can drift.
+`python -m backend.reconcile` (`make reconcile`) audits one against the other
+and reports three kinds of disagreement:
+
+| Kind | Meaning | Caught by ingestion? |
+|---|---|---|
+| absent | a row names an object the store has not got | yes — `already_done()` re-queues the track |
+| **stale** | the object exists but is a **different render** | **no** |
+| orphan | the store holds an object no row names | no |
+
+The middle one is the dangerous case and the reason this exists. Re-analysing
+a track can move its BPM, which moves its grid and changes every variant's
+length; if the rows are republished and the objects are not, every key still
+resolves, every duration is silently wrong, and mixes land off the beat. It
+reads as a bug in the beat matcher, not as a stale upload.
+
+`--apply` makes the store match the catalog — never the reverse. The rows are
+internally consistent (`variant_duration × ratio == master_duration`) and the
+render that produced each row is still on disk, so "upload the file the row
+describes" has a source of truth behind it, whereas rewriting rows to match
+whatever the store holds would bake a stale render into the metadata. Every
+upload is guarded: where the local file does not itself match the row, the
+entry is reported as unfixable rather than pushed, because the disagreement is
+then between the catalog and local disk and only re-ingestion can settle it.
+Orphans are deleted only with `--delete-orphans`, since that is the one
+irreversible action here.
+
+Durations are derived from object size rather than downloaded: everything is
+mono 16-bit PCM behind a canonical 44-byte header, so `frames = (size − 44)/2`
+exactly, and a whole-catalog audit costs one `list` call instead of one ranged
+GET per object. `--verify-headers` re-reads the real headers to check that
+assumption.
+
+Two environment traps this ran into, both worth knowing before the first run:
+
+- The Vercel Blob integration writes `BLOB_STORE_ID` into `.env`, and the CLI
+  refuses to start when it is set without `VERCEL_OIDC_TOKEN` — the error names
+  OIDC, which nothing in this project configures. `VercelBlobStore` drops the
+  variable when authenticating with a read-write token.
+- `VercelBlobStore(cli=...)` accepts a command list, so
+  `["npx", "--yes", "vercel@latest"]` works without installing the CLI globally.
+
+### Supabase's connection URL needs editing before libpq will take it
+
+The URL Supabase hands out carries a vendor marker — `?supa=base-pooler.x`, and
+`?pgbouncer=true` on the Prisma variant. Neither is a libpq parameter, and
+libpq does not ignore what it does not recognise; it rejects the whole string
+with `invalid URI query parameter: "supa"`. `engine.libpq_url()` strips those
+markers on the way into `PostgresEngine`, so the value can be pasted into
+`DJMIXER_DATABASE_URL` unedited. Nothing is lost: `pgbouncer=true` only tells
+Prisma to stop preparing statements, which `PostgresEngine` already decides for
+itself from the port.
+
+One consequence of the pooler worth knowing when comparing values: it serves
+`extra_float_digits = 0`, so PostgreSQL renders `DOUBLE PRECISION` as 15
+significant digits and a float read back through it can differ from the one
+written in the 16th. The *stored* value is bit-exact — `float8send()` proves
+it — so this is a display artifact of the read path, not data loss.
+
 ### What is not verified here
 
 The PostgreSQL path is covered through the dialect layer — `test_p5_db.py`
