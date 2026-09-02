@@ -343,6 +343,66 @@ class TestSchemaMigration(ResumableCase):
         self.assertTrue({"status", "status_error", "source_url",
                          "fetched_at", "analyzed_at", "ready_at"} <= cols)
 
+    def test_not_null_column_on_a_populated_table_explains_itself(self):
+        """A NOT NULL column with no DEFAULT cannot be added to a table that
+        already has rows — there is no value for them. That is what a renamed
+        column looks like to an additive migration, and the driver's message
+        ("Cannot add a NOT NULL column with default value NULL") says nothing
+        about which column or why. Fail with something actionable instead."""
+        import sqlite3
+        from backend.db import DatabaseError
+        from backend.db import engine as engine_mod
+
+        path = self.tmp / "renamed.sqlite3"
+        con = sqlite3.connect(str(path))
+        con.execute("CREATE TABLE widgets (id TEXT PRIMARY KEY, old_name TEXT)")
+        con.execute("INSERT INTO widgets VALUES ('w1', 'before')")
+        con.commit()
+        con.close()
+
+        schema = ("CREATE TABLE IF NOT EXISTS widgets (\n"
+                  "    id       TEXT PRIMARY KEY,\n"
+                  "    old_name TEXT,\n"
+                  "    new_name TEXT NOT NULL\n"
+                  ");\n")
+        with mock.patch.object(engine_mod, "schema_sql", return_value=schema):
+            database = Database.from_url(f"sqlite:///{path}")
+            with self.assertRaises(DatabaseError) as ctx:
+                database.migrate()
+            message = str(ctx.exception)
+            database.dispose()
+
+        self.assertIn("widgets.new_name", message)
+        self.assertIn("1 row", message)
+        self.assertIn("renamed", message)
+
+    def test_not_null_column_is_added_to_an_empty_table(self):
+        """The same column is fine when there are no rows to violate it."""
+        import sqlite3
+        from backend.db import engine as engine_mod
+
+        path = self.tmp / "empty.sqlite3"
+        con = sqlite3.connect(str(path))
+        con.execute("CREATE TABLE widgets (id TEXT PRIMARY KEY, old_name TEXT)")
+        con.commit()
+        con.close()
+
+        schema = ("CREATE TABLE IF NOT EXISTS widgets (\n"
+                  "    id       TEXT PRIMARY KEY,\n"
+                  "    old_name TEXT,\n"
+                  "    new_name TEXT NOT NULL\n"
+                  ");\n")
+        # verify_schema checks the real tables against models.py; this stub
+        # schema deliberately has none of them, and is not what is under test.
+        with mock.patch.object(engine_mod, "schema_sql", return_value=schema), \
+                mock.patch.object(Database, "verify_schema", lambda self: None):
+            Database.from_url(f"sqlite:///{path}").migrate().dispose()
+
+        con = sqlite3.connect(str(path))
+        cols = {r[1] for r in con.execute("PRAGMA table_info(widgets)")}
+        con.close()
+        self.assertIn("new_name", cols)
+
     def test_existing_rows_survive_migration(self):
         import sqlite3
         path = self.tmp / "legacy2.sqlite3"

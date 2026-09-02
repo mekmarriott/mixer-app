@@ -110,9 +110,34 @@ class Engine:
                 have = self._existing_columns(cur, table)
             except Exception:                  # table absent; DDL will have made it
                 continue
+            if not have:
+                continue
+            populated = None                   # counted lazily, at most once
             for name, decl in columns.items():
                 if name in have:
                     continue
+                # A NOT NULL column with no DEFAULT cannot be added to a table
+                # that already has rows: there is no value to give them. This
+                # is what a *rename* looks like from here (the old column is
+                # still present, the new one is missing and NOT NULL), and a
+                # rename needs a data migration, not a blind ADD COLUMN. Say so
+                # instead of surfacing "Cannot add a NOT NULL column with
+                # default value NULL" from the driver.
+                needs_value = ("NOT NULL" in decl.upper()
+                               and "DEFAULT" not in decl.upper())
+                if needs_value:
+                    if populated is None:
+                        populated = cur.execute(
+                            f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+                    if populated:
+                        raise DatabaseError(
+                            f"cannot migrate {table}.{name} automatically: it is "
+                            f"declared NOT NULL with no DEFAULT and {table} "
+                            f"already has {populated} row(s), so existing rows "
+                            f"have no value for it. This is usually a renamed "
+                            f"column and needs a hand-written migration that "
+                            f"copies the old values across. Deleting the data "
+                            f"directory and re-ingesting also resolves it.")
                 rendered = dialect.render_ddl(decl, self.dialect)
                 cur.execute(f"ALTER TABLE {table} ADD COLUMN {name} {rendered}")
 
