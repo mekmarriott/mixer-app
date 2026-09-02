@@ -9,6 +9,33 @@
 // across the overlap with its successor. Its gain is the product of the two.
 // Only neighbours ever overlap, so at any instant at most two tracks sound.
 
+// How long a fade runs when nothing has said otherwise. Bars, not seconds, so
+// it stays the same musical length at any tempo (4/4: bar_s = 4 * 60 / bpm).
+export const DEFAULT_FADE_BARS = 8;
+
+export function defaultFadeS(bpm) {
+  if (!bpm || bpm <= 0) return null;
+  return DEFAULT_FADE_BARS * 4 * (60 / bpm);
+}
+
+/**
+ * The part of an overlap the fade actually occupies.
+ *
+ * The fade used to be the whole overlap, but an overlap is placed by the
+ * marker search — it is wherever the two tracks line up best, and its length
+ * is a consequence of that placement, not a musical decision. So a good
+ * transition point could hand the mix a fade minutes long. The fade now starts
+ * where the incoming track enters and runs its own length, clamped to the
+ * overlap; `overlapEnd` keeps the full geometry for anything that needs it.
+ */
+export function fadeZone(overlap, fadeS) {
+  if (!overlap) return null;
+  const span = overlap.end - overlap.start;
+  if (!(span > 0)) return overlap;
+  const len = fadeS == null ? span : Math.min(Math.max(0, fadeS), span);
+  return { ...overlap, end: overlap.start + len, overlapEnd: overlap.end };
+}
+
 // Equal-power crossfade: a = cos(x*pi/2), b = sin(x*pi/2). Constant perceived
 // loudness across the overlap; both curves are monotonic.
 export function gainAt(t, fadeStart, fadeEnd, role) {

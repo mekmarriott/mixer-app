@@ -44,7 +44,8 @@ class TestP2Matching(unittest.TestCase):
         with read() as q:
             m = matching.match(*_rec_inputs(q, "1001", "1003"))
         bd = m["breakdown"]
-        expected = (config.WEIGHT_BPM * bd["bpm"] + config.WEIGHT_KEY * bd["key"]
+        expected = (config.WEIGHT_STRETCH * bd["stretch"]
+                    + config.WEIGHT_KEY * bd["key"]
                     + config.WEIGHT_ENERGY * bd["energy"])
         self.assertAlmostEqual(m["score"], expected, places=3)
 
@@ -61,15 +62,22 @@ class TestP2Matching(unittest.TestCase):
         self.assertEqual(matching.CAMELOT_TABLE[("8A", "10A")],
                          matching.CAMELOT_TABLE[("10A", "8A")])
 
-    def test_p2_02_bpm_component_prefers_less_stretch(self):
-        """BPM component is near-binary from the shared grid but penalizes
-        larger stretch distances."""
-        s_close, g_close = matching.bpm_score(124, 124, [124])
-        s_far, g_far = matching.bpm_score(120, 128, [124])
+    def test_p2_02_stretch_component_prefers_less_stretch(self):
+        """The stretch term scores the CANDIDATE's own distance from the grid.
+
+        Scored alone rather than averaged with the seed's: the seed's penalty
+        is constant across a call, so averaging only compresses the term
+        towards the middle of its range.
+        """
+        s_close, g_close = matching.stretch_score(124, 124, [124])
+        s_far, g_far = matching.stretch_score(124, 128, [124])
         self.assertGreater(s_close, s_far)
         self.assertEqual(g_close, 124)
         self.assertEqual(g_far, 124)
-        s_none, g_none = matching.bpm_score(124, 90, [])
+        # Only the candidate moves the score; the seed's own stretch does not.
+        s_seed_far, _ = matching.stretch_score(120, 124, [124])
+        self.assertAlmostEqual(s_seed_far, 1.0, places=6)
+        s_none, g_none = matching.stretch_score(124, 90, [])
         self.assertEqual((s_none, g_none), (0.0, None))
 
     # ------------------------------------------------------------- P2-03
@@ -80,7 +88,7 @@ class TestP2Matching(unittest.TestCase):
             recs = matching.recommend(q, "1001")
             for r in recs:
                 self.assertIn("breakdown", r)
-                for k in ("bpm", "key", "energy", "weights"):
+                for k in ("stretch", "key", "energy", "weights"):
                     self.assertIn(k, r["breakdown"])
                 a, b, an_a, sg_a, an_b, sg_b, _, _ = _rec_inputs(
                     q, "1001", r["track_id"])

@@ -3,7 +3,7 @@ import unittest
 
 from fixture import get_fixture, read
 
-from backend import transitions
+from backend import config, transitions
 from backend.analysis import rescale_analysis
 from backend.segmentation import ENTRY_ROLES, EXIT_ROLES
 
@@ -111,3 +111,45 @@ class TestP3Transitions(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestFadeLength(unittest.TestCase):
+    """A transition's LENGTH, which is not the same as the overlap it sits in."""
+
+    def test_fade_is_graded_from_blend_quality(self):
+        good = {"spectral": 1.0, "energy": 1.0, "phase": 1.0}
+        poor = {"spectral": 0.0, "energy": 0.0, "phase": 0.0}
+        self.assertEqual(transitions.fade_bars(good), config.FADE_BARS_LADDER[-1])
+        self.assertEqual(transitions.fade_bars(poor), config.FADE_BARS_LADDER[0])
+
+    def test_every_rung_is_a_musical_length_in_range(self):
+        """The whole ladder lands where a transition is actually heard.
+
+        The fade used to span the overlap, which the marker search places for
+        alignment rather than for length, so it could run for minutes.
+        """
+        for bpm in (100, 125, 150):
+            for bars in config.FADE_BARS_LADDER:
+                seconds = bars * 4 * (60.0 / bpm)
+                self.assertGreaterEqual(seconds, 3.0)
+                self.assertLessEqual(seconds, 40.0)
+
+    def test_room_steps_the_fade_down_the_ladder(self):
+        """A fade is stepped to a shorter rung, not clipped to fit.
+
+        Clipping would leave it on an arbitrary number of beats; the rung below
+        is still a whole number of bars.
+        """
+        cand = {"components": {"spectral": 1.0, "energy": 1.0, "phase": 1.0}}
+        roomy = transitions.fade_for(cand, 120, room_s=1000)
+        tight = transitions.fade_for(cand, 120, room_s=4.0)
+        self.assertEqual(roomy["fade_bars"], config.FADE_BARS_LADDER[-1])
+        self.assertIn(tight["fade_bars"], config.FADE_BARS_LADDER)
+        self.assertLess(tight["fade_bars"], roomy["fade_bars"])
+        self.assertAlmostEqual(
+            tight["fade_s"], tight["fade_bars"] * 4 * (60.0 / 120), places=3)
+
+    def test_no_room_still_yields_the_shortest_rung(self):
+        cand = {"components": {"spectral": 1.0, "energy": 1.0, "phase": 1.0}}
+        none = transitions.fade_for(cand, 120, room_s=0.0)
+        self.assertEqual(none["fade_bars"], config.FADE_BARS_LADDER[0])

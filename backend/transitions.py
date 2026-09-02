@@ -16,6 +16,60 @@ from .segmentation import ENTRY_ROLES, EXIT_ROLES
 
 W_ENERGY, W_PHASE, W_SPECTRAL, W_ROLE = 0.35, 0.30, 0.20, 0.15
 
+# Grading a transition's LENGTH is a different question from grading its
+# placement, so it uses its own weights over the same components. How well two
+# windows blend decides how long they can be held together: a clean blend
+# sustains a long fade, a rough one has to be got over with.
+F_SPECTRAL, F_ENERGY, F_PHASE = 0.50, 0.30, 0.20
+
+# Sections a track can be entered over — sparse enough to lay another track
+# across. The contiguous run of them at B's entry is the room a fade has.
+BLEND_ROLES = ("intro", "breakdown", "build")
+
+
+def fade_bars(components):
+    """Fade length in bars, graded from how well the two windows blend."""
+    fitness = (F_SPECTRAL * components["spectral"]
+               + F_ENERGY * components["energy"]
+               + F_PHASE * components["phase"])
+    fitness = min(1.0, max(0.0, fitness))
+    ladder = config.FADE_BARS_LADDER
+    return int(ladder[round(fitness * (len(ladder) - 1))])
+
+
+def _entry_room_after(segments, start_frame, hop_dur):
+    """Seconds of contiguous blendable material from `start_frame` onward.
+
+    Follows the whole run of entry-role sections rather than just the one the
+    fade starts in: an intro running into a breakdown is all room.
+    """
+    room = 0.0
+    for seg in segments:
+        if seg["end_frame"] <= start_frame:
+            continue
+        if seg["label"] not in BLEND_ROLES:
+            break
+        room += (seg["end_frame"] - max(seg["start_frame"], start_frame)) * hop_dur
+    return room
+
+
+def fade_for(candidate, grid_bpm, room_s=None):
+    """Fade length for a candidate, stepped down the ladder to fit the room.
+
+    Stepping down rather than clamping keeps the length on a musical count: a
+    fade cut to fit would land on an arbitrary number of beats, where the rung
+    below is still a whole number of bars.
+    """
+    bars = fade_bars(candidate["components"])
+    if room_s is not None:
+        bar_s = 4 * (60.0 / grid_bpm)
+        allowed = room_s * config.FADE_ROOM_TOLERANCE
+        fits = [b for b in config.FADE_BARS_LADDER
+                if b <= bars and b * bar_s <= allowed]
+        bars = max(fits) if fits else config.FADE_BARS_LADDER[0]
+    return {"fade_bars": bars,
+            "fade_s": round(bars * 4 * (60.0 / grid_bpm), 4)}
+
 
 def _beats_per_frame(analysis):
     hop_dur = analysis["frames"]["hop_dur"]
@@ -148,6 +202,16 @@ def score_pair(analysis_a, segments_a, analysis_b, segments_b):
         if len(markers) >= config.MARKER_TOP_N:
             break
 
+    # Length is decided per marker, because it depends on how that particular
+    # pair of windows blends and on how much room B's entry leaves.
+    for m in markers:
+        room = min(
+            max(0.0, analysis_a["duration_s"] - m["a_start_s"]),
+            _entry_room_after(segments_b,
+                              int(round(m["b_start_s"] / hop_dur_b)), hop_dur_b))
+        m.update(fade_for(m, analysis_a["bpm"], room_s=room))
+        m["fade_room_s"] = round(float(room), 4)
+
     window_s = config.WINDOW_BARS * 4 * (60.0 / analysis_a["bpm"])
     return {
         "window_bars": config.WINDOW_BARS,
@@ -155,4 +219,5 @@ def score_pair(analysis_a, segments_a, analysis_b, segments_b):
         "curve": candidates,          # full scored curve (P3-05)
         "markers": markers,
         "best": markers[0] if markers else None,
+        "fade": markers[0]["fade_s"] if markers else None,
     }

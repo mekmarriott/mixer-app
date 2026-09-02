@@ -413,7 +413,7 @@ function deckRow(meta, rec) {
       `<span>${pct}%</span>` +
       `<svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">` +
       `<circle cx="9" cy="9" r="8"></circle><path d="${piePath(rec.score)}"></path></svg>`;
-    score.title = `BPM ${Math.round(rec.breakdown.bpm * 100)}% \u00b7 key ${Math.round(rec.breakdown.key * 100)}% \u00b7 energy ${Math.round(rec.breakdown.energy * 100)}%`;
+    score.title = `key ${Math.round(rec.breakdown.key * 100)}% \u00b7 energy ${Math.round(rec.breakdown.energy * 100)}% \u00b7 stretch ${Math.round(rec.breakdown.stretch * 100)}%`;
   }
   li.appendChild(score);
 
@@ -492,9 +492,15 @@ async function addNextTrack(trackId) {
   const placedIndex = mix.tracks.length - 1;
   const prevStart = state.offsets(mix)[placedIndex - 1] ?? 0;
   const minDelta = Math.max(0, state.minOffsetFor(mix, placedIndex) - prevStart);
-  state.setDelta(mix, meta.id, align.placementOffset(currentMarkers, {
+  const delta = align.placementOffset(currentMarkers, {
     prevDuration: a.duration, minDelta,
-  }));
+  });
+  state.setDelta(mix, meta.id, delta);
+  // The server grades a fade length per marker, from how that particular pair
+  // of windows blends and how much room B's entry leaves. Carry the one the
+  // track actually landed on, not the best marker's, since placement may have
+  // had to choose a different legal one.
+  mix.tracks[mix.tracks.length - 1].fadeS = fadeForOffset(currentMarkers, delta, tr);
 
   junctions.set(lastIndex, { markers: currentMarkers, gridBpm });
   timeline.setWaveform(meta.id, wfB);
@@ -511,6 +517,13 @@ async function addNextTrack(trackId) {
   updateTimes();
   requestDraw();
   await saveChain();
+}
+
+/** The graded fade length of whichever marker a track was placed on. */
+function fadeForOffset(markers, offset, transition) {
+  const hit = (markers || []).find(
+    (m) => Math.abs(align.markerToOffset(m) - offset) < 1e-6);
+  return (hit && hit.fade_s) ?? (transition && transition.fade) ?? null;
 }
 
 /** Pan (without changing zoom) so `t` is comfortably inside the viewport. */
@@ -924,6 +937,10 @@ async function loadMix(id) {
     try {
       const tr = await api.transitions(trk.id, mix.tracks[i + 1].id);
       junctions.set(i, { markers: tr.markers, gridBpm: tr.grid_bpm });
+      // Fade length is derived, not stored with the chain, so recover it from
+      // the marker this junction sits on.
+      const startB = state.offsets(mix)[i + 1] - state.offsets(mix)[i];
+      mix.tracks[i + 1].fadeS = fadeForOffset(tr.markers, startB, tr);
       if (i === mix.tracks.length - 2) currentTransition = tr;
     } catch { /* no shared grid for this pair: no markers to show */ }
   }));

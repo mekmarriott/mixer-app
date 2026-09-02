@@ -1,11 +1,14 @@
 """Matching & recommendation (Phase 2).
 
-score = W_BPM * bpm_score + W_KEY * key_score + W_ENERGY * energy_score
+score = W_KEY * key_score + W_ENERGY * energy_score + W_STRETCH * stretch_score
 
-bpm_score    near-binary from the shared grid: 1 minus a small penalty for
-             how far each track must stretch from native tempo to meet.
-key_score    Camelot-wheel lookup (24x24, precomputed).
-energy_score outro-of-A vs intro-of-B mean RMS closeness (O(1) via prefix sums).
+Tempo is settled before scoring starts: sharing a grid point is a hard gate,
+so a tempo term can only separate survivors by how far each is stretched, and
+the weight belongs on what the gate has not already decided.
+
+stretch_score how little the CANDIDATE is stretched onto the shared grid.
+key_score     Camelot-wheel lookup (24x24, precomputed).
+energy_score  outro-of-A vs intro-of-B mean RMS closeness (O(1) via prefix sums).
 """
 import numpy as np
 
@@ -50,18 +53,22 @@ CAMELOT_TABLE = {(f"{n}{l}", f"{m}{k}"): camelot_score(f"{n}{l}", f"{m}{k}")
                  for n in _NUMS for l in "AB" for m in _NUMS for k in "AB"}
 
 
-def bpm_score(native_a, native_b, shared):
+def stretch_score(native_a, native_b, shared):
+    """How little the CANDIDATE has to be stretched, and the grid to do it on.
+
+    The grid point is chosen for the pair — the sum of both penalties — but the
+    score is the candidate's penalty alone. The seed's is the same for every
+    candidate in a call, so including it only adds a constant, and averaging
+    the two is what compressed this term into the narrow band that made it
+    useless: a shared grid already guarantees both sides are within
+    MAX_STRETCH_RATIO, so the average could never fall far. Scored alone, the
+    term uses its whole range.
+    """
     if not shared:
         return 0.0, None
-    best = None
-    best_score = -1.0
-    for g in shared:
-        pen = 0.5 * (bpm_grid.stretch_penalty(native_a, g)
-                     + bpm_grid.stretch_penalty(native_b, g))
-        s = 1.0 - 0.35 * pen           # shared grid => >= 0.65 by construction
-        if s > best_score:
-            best_score, best = s, g
-    return best_score, best
+    best = min(shared, key=lambda g: (bpm_grid.stretch_penalty(native_a, g)
+                                      + bpm_grid.stretch_penalty(native_b, g)))
+    return 1.0 - bpm_grid.stretch_penalty(native_b, best), best
 
 
 def region_energies(analysis, segments):
@@ -100,19 +107,21 @@ def match(track_a, track_b, analysis_a, segments_a, analysis_b, segments_b,
     rendered grid BPMs.
     """
     shared = bpm_grid.shared_grid(grid_a, grid_b)
-    s_bpm, best_grid = bpm_score(track_a.native_bpm, track_b.native_bpm, shared)
+    s_stretch, best_grid = stretch_score(track_a.native_bpm, track_b.native_bpm,
+                                        shared)
     s_key = CAMELOT_TABLE[(track_a.camelot, track_b.camelot)]
     s_energy = energy_continuity(analysis_a, segments_a, analysis_b, segments_b)
-    total = (config.WEIGHT_BPM * s_bpm + config.WEIGHT_KEY * s_key
-             + config.WEIGHT_ENERGY * s_energy)
+    total = (config.WEIGHT_KEY * s_key + config.WEIGHT_ENERGY * s_energy
+             + config.WEIGHT_STRETCH * s_stretch)
     return {
         "track_id": track_b.id,
         "score": round(float(total), 4),
         "breakdown": {
-            "bpm": round(float(s_bpm), 4),
+            "stretch": round(float(s_stretch), 4),
             "key": round(float(s_key), 4),
             "energy": round(float(s_energy), 4),
-            "weights": {"bpm": config.WEIGHT_BPM, "key": config.WEIGHT_KEY,
+            "weights": {"stretch": config.WEIGHT_STRETCH,
+                        "key": config.WEIGHT_KEY,
                         "energy": config.WEIGHT_ENERGY},
         },
         "shared_grid": shared,
@@ -177,7 +186,7 @@ def recommend(q, track_id, grids=None, limit=None, rows=None):
         shared = bpm_grid.shared_grid(grid_a, grid_b)
         if not shared:
             continue                                            # P2-01
-        s_bpm, best_grid = bpm_score(a.native_bpm, b.native_bpm, shared)
+        s_stretch, best_grid = stretch_score(a.native_bpm, b.native_bpm, shared)
         s_key = CAMELOT_TABLE[(a.camelot, b.camelot)]
 
         intro_b = b.intro_energy
@@ -192,18 +201,19 @@ def recommend(q, track_id, grids=None, limit=None, rows=None):
             intro_b = region_energies(an_b, seg_b)[1]
 
         s_energy = energy_score(outro_a, intro_b)
-        total = (config.WEIGHT_BPM * s_bpm + config.WEIGHT_KEY * s_key
-                 + config.WEIGHT_ENERGY * s_energy)
+        total = (config.WEIGHT_KEY * s_key + config.WEIGHT_ENERGY * s_energy
+                 + config.WEIGHT_STRETCH * s_stretch)
         if total < config.MATCH_SCORE_CUTOFF:                   # P2-04
             continue
         out.append({
             "track_id": b.id,
             "score": round(float(total), 4),
             "breakdown": {
-                "bpm": round(float(s_bpm), 4),
+                "stretch": round(float(s_stretch), 4),
                 "key": round(float(s_key), 4),
                 "energy": round(float(s_energy), 4),
-                "weights": {"bpm": config.WEIGHT_BPM, "key": config.WEIGHT_KEY,
+                "weights": {"stretch": config.WEIGHT_STRETCH,
+                            "key": config.WEIGHT_KEY,
                             "energy": config.WEIGHT_ENERGY},
             },
             "shared_grid": shared,

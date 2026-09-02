@@ -264,9 +264,15 @@ def bucket_for_bpm(bpm):
     return None
 
 # Matching score weights (Phase 2)
-WEIGHT_BPM = 0.45
-WEIGHT_KEY = 0.35
-WEIGHT_ENERGY = 0.20
+# Tempo is already settled by the time a candidate is scored: sharing a grid
+# point is a hard gate, so every survivor is playable at the mix tempo and a
+# tempo term can only separate them by how far each is stretched. Weighting it
+# heavily bought a constant floor and almost no spread — it scored the filter's
+# own decision a second time — so the weight sits on the qualities the filter
+# has NOT already settled, harmony above all.
+WEIGHT_STRETCH = 0.15
+WEIGHT_KEY = 0.50
+WEIGHT_ENERGY = 0.35
 MATCH_SCORE_CUTOFF = 0.40               # below this a candidate is not recommended
 
 # How many ranked candidates a recommendation request returns. Every one costs
@@ -279,6 +285,23 @@ RECOMMENDATION_LIMIT = 10           # one deck page; the rest is fetched on scro
 WINDOW_BARS = 8                          # transition window length in bars
 HOP_BARS = 1                             # sliding hop in bars
 MARKER_TOP_N = 5                         # markers surfaced to the UI
+
+# ---- Fade length --------------------------------------------------------
+# How long the crossfade itself runs, which is NOT the same as how long the two
+# tracks overlap. The fade used to span the whole overlap, and an overlap is
+# placed by the marker search rather than chosen for its length, so a good
+# transition point could hand the mix a fade minutes long.
+#
+# Lengths are counted in BARS because that is the unit a transition is heard
+# in; seconds follow from the grid tempo (4/4, so bar_s = 4 * 60 / bpm). The
+# ladder spans roughly 4 to 31 seconds at 125 BPM.
+FADE_BARS_LADDER = (2, 4, 8, 12, 16)
+FADE_MIN_BARS = FADE_BARS_LADDER[0]
+FADE_MAX_BARS = FADE_BARS_LADDER[-1]
+# A fade may exceed the room actually available by this factor before it is
+# stepped down the ladder. Sparse entry sections are short — a strict bound
+# would pin most transitions to the shortest rung.
+FADE_ROOM_TOLERANCE = 2.0
 
 CREDITS = [
     {"name": "Essentia", "license": "AGPL-3.0", "url": "https://essentia.upf.edu/licensing_information.html",

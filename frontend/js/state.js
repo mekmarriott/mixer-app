@@ -22,6 +22,8 @@
 // support hours-long mixes; see docs/automation-test-manifest.md for what it
 // means for testing-document P4-18.
 
+import { fadeZone, defaultFadeS } from "./crossfade.js";
+
 export const MAX_TRACKS = 100;
 
 export function createMix() {
@@ -127,7 +129,12 @@ export function overlapAt(mix, i) {
   const offs = offsets(mix);
   const start = Math.max(offs[i], offs[i + 1]);
   const end = Math.min(offs[i] + a.duration, offs[i + 1] + b.duration);
-  return end > start ? { start, end, from: i, to: i + 1 } : null;
+  if (!(end > start)) return null;
+  // Where the tracks overlap is geometry; how long the fade runs is a musical
+  // choice, carried by the INCOMING track — it is the one being brought in,
+  // and the server graded the length from that junction's own blend.
+  const fadeS = b.fadeS ?? defaultFadeS(b.bpm || a.bpm);
+  return fadeZone({ start, end, from: i, to: i + 1 }, fadeS);
 }
 
 /** Every transition zone in the mix, in order. */
