@@ -75,7 +75,10 @@ class TestInfraApp(unittest.TestCase):
         """The cache is a cache, not a different code path."""
         tid = self._track_ids()[0]
         with read() as q:
-            direct = waveforms.envelope(q.get_track_analysis(id=tid), 64, None)
+            from backend import analysis_store
+            direct = waveforms.envelope(
+                analysis_store.hydrate(tid, q.get_track_analysis(id=tid)),
+                64, None)
         served = self.client.get(f"/api/tracks/{tid}/waveform?points=64").get_json()
         self.assertEqual(served["points"], direct["points"])
         self.assertAlmostEqual(served["duration_s"], direct["duration_s"], places=6)

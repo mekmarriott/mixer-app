@@ -60,7 +60,7 @@ class TestP4Backend(unittest.TestCase):
         d = r.get_json()
         self.assertEqual(len(d["points"]), 50)
         with read() as q:
-            a = q.get_track_analysis(id="1001")
+            a = self.database.full_analysis("1001")
         peak = max(a["frames"]["rms"])
         # First and last envelope points correspond to first/last rms frames.
         self.assertAlmostEqual(d["points"][0], a["frames"]["rms"][0] / peak, places=2)
@@ -70,7 +70,7 @@ class TestP4Backend(unittest.TestCase):
     def test_p4_11_waveform_bpm_rescale(self):
         """Waveform at a grid BPM rescales duration/beat grid by the ratio."""
         with read() as q:
-            a = q.get_track_analysis(id="1001")
+            a = self.database.full_analysis("1001")
         r = self.client.get("/api/tracks/1001/waveform?points=50&bpm=123").get_json()
         ratio = 123 / a["bpm"]
         self.assertAlmostEqual(r["duration_s"], a["duration_s"] / ratio, places=3)

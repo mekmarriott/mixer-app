@@ -66,7 +66,7 @@ class TestEssentiaEngine(unittest.TestCase):
         """Essentia returns real tracked beat times; spacing should match the
         reported tempo without being a synthesised uniform comb."""
         with read() as q:
-            a = q.get_track_analysis(id="1001")
+            a = self.database.full_analysis("1001")
         diffs = np.diff(a["beat_grid"])
         self.assertAlmostEqual(float(np.median(diffs)), 60.0 / a["bpm"], delta=0.02)
         self.assertGreater(float(np.std(diffs)), 0.0, "beat grid is perfectly uniform")

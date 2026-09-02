@@ -110,6 +110,19 @@ def meta_key(track_id):
     return f"meta/{track_id}.json"
 
 
+def analysis_key(track_id):
+    """The frame and prefix arrays for a track.
+
+    These are the bulk of an analysis by a wide margin — around 640 KB of a
+    645 KB row, against 4 KB for everything else — and nothing queries them:
+    they are fetched whole, by track, to score a transition. Holding them in a
+    JSONB column put half a gigabyte in Postgres for 794 tracks and made every
+    SELECT * drag a megabyte through the pooler. They belong in the object
+    store, which is what this key was reserved for.
+    """
+    return f"analysis/{track_id}.npz"
+
+
 def _content_type(key):
     """The MIME type to store `key` under.
 
@@ -139,6 +152,15 @@ class BlobStore:
         raise NotImplementedError
 
     def url_for(self, key):
+        raise NotImplementedError
+
+    def get_bytes(self, key):
+        """The object's contents, or None when the key is absent.
+
+        The store was write-and-serve until now: everything it held was handed
+        to a browser by URL, so nothing needed to read one back. Analysis
+        arrays are the first objects the server itself consumes.
+        """
         raise NotImplementedError
 
     def exists(self, key):
@@ -222,6 +244,10 @@ class LocalBlobStore(BlobStore):
     def url_for(self, key):
         return f"{self.base_url}/{key}"
 
+    def get_bytes(self, key):
+        path = self._path(key)
+        return path.read_bytes() if path.is_file() else None
+
     def exists(self, key):
         return self._path(key).is_file()
 
@@ -257,6 +283,8 @@ class VercelBlobStore(BlobStore):
     """
 
     URL_RE = re.compile(r"https://\S+\.blob\.vercel-storage\.com/\S+")
+    #: Reads happen on the request path, inside the function timeout.
+    READ_TIMEOUT_S = 15
 
     #: A store is created public OR private and will not accept writes at the
     #: other access level — a private store rejects `--access public` outright.
@@ -394,6 +422,29 @@ class VercelBlobStore(BlobStore):
         raise BlobStoreError(
             f"no URL known for {key!r}: set BLOB_BASE_URL, or upload through "
             "this process so the CLI-reported URL is captured")
+
+    def get_bytes(self, key):
+        """Read an object back.
+
+        Over HTTP from the public URL rather than through the CLI: this runs on
+        the serving path, where a subprocess per read would cost more than the
+        transfer, and the objects are already anonymously readable.
+        """
+        import urllib.error
+        import urllib.request
+        try:
+            url = self.url_for(key)
+        except BlobStoreError:
+            return None
+        try:
+            with urllib.request.urlopen(url, timeout=self.READ_TIMEOUT_S) as r:
+                return r.read()
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404:
+                return None
+            raise BlobStoreError(f"reading {key!r}: HTTP {exc.code}") from exc
+        except OSError as exc:
+            raise BlobStoreError(f"reading {key!r}: {exc}") from exc
 
     def exists(self, key):
         try:

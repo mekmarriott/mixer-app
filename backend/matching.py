@@ -159,7 +159,8 @@ def recommend(q, track_id, grids=None, limit=None, rows=None):
     # A's outro is the only thing about A that scoring needs.
     outro_a = a.outro_energy
     if outro_a is None:
-        an_a = q.get_track_analysis(id=track_id)
+        from . import analysis_store
+        an_a = analysis_store.hydrate(track_id, q.get_track_analysis(id=track_id))
         seg_a = q.get_track_segments(id=track_id)
         if not an_a or not seg_a:
             return []
@@ -194,7 +195,8 @@ def recommend(q, track_id, grids=None, limit=None, rows=None):
             # Pre-dates the stored columns, or was ingested from an analysis
             # this could not read. Rare and self-healing on re-ingest, so it is
             # worth one narrow read rather than dropping the candidate.
-            an_b = q.get_track_analysis(id=b.id)
+            from . import analysis_store
+            an_b = analysis_store.hydrate(b.id, q.get_track_analysis(id=b.id))
             seg_b = q.get_track_segments(id=b.id)
             if not an_b or not seg_b:
                 continue

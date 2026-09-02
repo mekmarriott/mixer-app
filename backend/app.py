@@ -40,6 +40,7 @@ from flask import (Flask, abort, jsonify, redirect, request, send_file,
 
 from . import (config, dbguard, licensing, matching, mixes as mixes_mod,
                storage, transitions)
+from . import analysis_store
 from . import warmup as warmup_mod
 from . import waveforms
 from .db import Database
@@ -359,7 +360,8 @@ def create_app(run_ingestion=True, database=None, warmup_async=False):
 
         def load():
             with database.reading() as q:
-                return q.get_track_analysis(id=tid)
+                stored = q.get_track_analysis(id=tid)
+            return analysis_store.hydrate(tid, stored, store)
 
         result = cache.get_or_compute(tid, points, bpm, load)
         if result is None:
@@ -467,15 +469,20 @@ def create_app(run_ingestion=True, database=None, warmup_async=False):
                 abort(403, "ND-licensed tracks cannot be mixed (playback only)")
             grids = grid_bpms_by_track(q)
 
-        m = matching.match(ta, tb, ta.analysis_json, ta.segments_json,
-                           tb.analysis_json, tb.segments_json,
+        # The frame arrays live in the object store; the row carries the
+        # scalars. Scoring a transition is the one request that needs them, so
+        # it is the one place that pays to fetch them.
+        full_a = analysis_store.hydrate(a_id, ta.analysis_json, store)
+        full_b = analysis_store.hydrate(b_id, tb.analysis_json, store)
+        m = matching.match(ta, tb, full_a, ta.segments_json,
+                           full_b, tb.segments_json,
                            grids.get(a_id, []), grids.get(b_id, []))
         grid = m["best_grid_bpm"]
         if grid is None:
             abort(409, "Tracks share no BPM grid point")
         from .analysis import rescale_analysis
-        an_a = rescale_analysis(ta.analysis_json, grid / ta.native_bpm)
-        an_b = rescale_analysis(tb.analysis_json, grid / tb.native_bpm)
+        an_a = rescale_analysis(full_a, grid / ta.native_bpm)
+        an_b = rescale_analysis(full_b, grid / tb.native_bpm)
         timer = Timer(database)
         with timer.stage("transition_curve", f"{a_id}->{b_id}"):
             result = transitions.score_pair(an_a, ta.segments_json,

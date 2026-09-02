@@ -11,8 +11,11 @@ from backend.segmentation import ENTRY_ROLES, EXIT_ROLES
 def _pair(a_id, b_id, grid):
     with read() as q:
         a, b = q.get_track(id=a_id), q.get_track(id=b_id)
-    an_a = rescale_analysis(a.analysis_json, grid / a.native_bpm)
-    an_b = rescale_analysis(b.analysis_json, grid / b.native_bpm)
+    from backend import analysis_store
+    an_a = rescale_analysis(analysis_store.hydrate(a.id, a.analysis_json),
+                            grid / a.native_bpm)
+    an_b = rescale_analysis(analysis_store.hydrate(b.id, b.analysis_json),
+                            grid / b.native_bpm)
     return an_a, a.segments_json, an_b, b.segments_json
 
 

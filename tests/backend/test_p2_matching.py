@@ -4,7 +4,7 @@ import unittest
 
 from fixture import get_fixture, read
 
-from backend import config, matching
+from backend import analysis_store, config, matching
 from backend.db.catalog import grid_bpms_by_track
 
 
@@ -13,8 +13,10 @@ def _rec_inputs(q, a_id, b_id):
     grid_a, grid_b) — the argument tuple matching.match() takes."""
     a, b = q.get_track(id=a_id), q.get_track(id=b_id)
     grids = grid_bpms_by_track(q)
-    return (a, b, a.analysis_json, a.segments_json,
-            b.analysis_json, b.segments_json,
+    from backend import analysis_store
+    return (a, b,
+            analysis_store.hydrate(a_id, a.analysis_json), a.segments_json,
+            analysis_store.hydrate(b_id, b.analysis_json), b.segments_json,
             grids.get(a_id, []), grids.get(b_id, []))
 
 
@@ -154,7 +156,8 @@ class TestP2Matching(unittest.TestCase):
             for row in q.list_track_summaries():
                 if not row.mixable:
                     continue
-                analysis = q.get_track_analysis(id=row.id)
+                analysis = analysis_store.hydrate(
+                    row.id, q.get_track_analysis(id=row.id))
                 segments = q.get_track_segments(id=row.id)
                 if not analysis or not segments:
                     continue
@@ -186,7 +189,8 @@ class TestP2Matching(unittest.TestCase):
         finally:
             with self.database.writing() as q:
                 for row in q.list_track_summaries():
-                    an = q.get_track_analysis(id=row.id)
+                    an = analysis_store.hydrate(
+                        row.id, q.get_track_analysis(id=row.id))
                     sg = q.get_track_segments(id=row.id)
                     if not an or not sg:
                         continue

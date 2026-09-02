@@ -139,6 +139,8 @@ class Warmup:
             with self.database.reading() as q:
                 analysis = q.get_track_analysis(id=tid)
                 segments = q.get_track_segments(id=tid)
+            from . import analysis_store
+            analysis = analysis_store.hydrate(tid, analysis)
             if not analysis:
                 continue
             energies = None
@@ -272,7 +274,12 @@ class Warmup:
         for i, row in enumerate(wanted, 1):
             with self.database.reading() as q:
                 analysis = q.get_track_analysis(id=row["id"])
-            if analysis:
+            from . import analysis_store
+            analysis = analysis_store.hydrate(row["id"], analysis)
+            # Arrays absent means they could not be fetched from the store,
+            # not that the track is broken: the deck row still draws from its
+            # stored envelope, and the timeline warms on first request.
+            if analysis and (analysis.get("frames") or {}).get("rms"):
                 self.cache.warm_native(row["id"], analysis)
             # Inline the thumbnail so the opening deck is a pure snapshot read.
             wf = self.cache.get(row["id"], config.DECK_WAVEFORM_POINTS)

@@ -166,6 +166,18 @@ class Database:
         self.engine.dispose()
 
     # -- scopes ------------------------------------------------------------
+    def full_analysis(self, track_id):
+        """A track's analysis with its arrays, wherever they are stored.
+
+        The one place that knows the arrays may live in the object store, so
+        callers that need frames ask for them here rather than each deciding
+        whether to hydrate.
+        """
+        from .. import analysis_store
+        with self.reading() as q:
+            stored = q.get_track_analysis(id=track_id)
+        return analysis_store.hydrate(track_id, stored)
+
     @contextlib.contextmanager
     def reading(self):
         with self.engine.connection(write=False) as conn:
@@ -211,6 +223,15 @@ class Catalog:
         after analysis — so fields the caller does not supply are left as they
         are rather than blanked (the upsert COALESCEs them).
         """
+        # The frame and prefix arrays go to the object store, and the row keeps
+        # the scalars. Done before the transaction opens: it is a network write
+        # to a different system, and holding a database transaction across it
+        # would tie up a pooled connection for the duration.
+        analysis = row.get("analysis")
+        if analysis and (analysis.get("frames") or analysis.get("prefix")):
+            from .. import analysis_store
+            analysis = analysis_store.put(row["id"], analysis)
+
         with self.db.writing() as q:
             q.upsert_track(
                 id=row["id"], name=row["name"], artist=row["artist"],
@@ -219,7 +240,7 @@ class Catalog:
                 mixable=row["mixable"], native_bpm=row.get("native_bpm"),
                 camelot=row.get("camelot"), duration_s=row.get("duration_s"),
                 audio_key=row.get("audio_key"),
-                analysis_json=row.get("analysis"),
+                analysis_json=analysis,
                 segments_json=row.get("segments"),
                 status=row.get("status", status_mod.PENDING),
                 status_error=row.get("status_error"),

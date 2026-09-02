@@ -52,7 +52,7 @@ class TestP1Ingestion(unittest.TestCase):
 
     def test_p1_02_beat_grid_spacing_matches_bpm(self):
         with read() as q:
-            a = q.get_track_analysis(id="1001")
+            a = self.database.full_analysis("1001")
         diffs = np.diff(a["beat_grid"])
         self.assertAlmostEqual(float(np.median(diffs)), 60.0 / a["bpm"], delta=0.02)
 
@@ -79,7 +79,7 @@ class TestP1Ingestion(unittest.TestCase):
     def test_p1_04_prefix_sums_match_bruteforce(self):
         """P1-04: prefix-sum window aggregates == brute-force sums."""
         with read() as q:
-            a = q.get_track_analysis(id="1001")
+            a = self.database.full_analysis("1001")
         rms = a["frames"]["rms"]
         prefix = a["prefix"]["rms"]
         rng = np.random.default_rng(7)
@@ -103,7 +103,7 @@ class TestP1Ingestion(unittest.TestCase):
                 return super().__getitem__(i)
 
         with read() as q:
-            a = q.get_track_analysis(id="1001")
+            a = self.database.full_analysis("1001")
         p = Counting(a["prefix"]["rms"])
         analysis.window_mean(p, 0, len(p) - 1)      # widest window
         wide_reads = p.reads
@@ -135,7 +135,7 @@ class TestP1Ingestion(unittest.TestCase):
     def test_p1_06_rescale_matches_ratio_no_reanalysis(self):
         """P1-06: variant analysis comes from rescaling, not re-analysis."""
         with read() as q:
-            a = q.get_track_analysis(id="1001")
+            a = self.database.full_analysis("1001")
         ratio = 1.05
         r = analysis.rescale_analysis(a, ratio)
         self.assertAlmostEqual(r["bpm"], a["bpm"] * ratio, places=2)
