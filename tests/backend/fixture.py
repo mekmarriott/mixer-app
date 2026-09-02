@@ -28,9 +28,9 @@ _cache = {}
 
 
 def get_fixture():
-    """Returns (con, results, tmpdir). Built once, reused by all test modules."""
-    if "con" in _cache:
-        return _cache["con"], _cache["results"], _cache["tmp"]
+    """Returns (database, results, tmpdir). Built once, reused by all modules."""
+    if "database" in _cache:
+        return _cache["database"], _cache["results"], _cache["tmp"]
 
     tmp = Path(tempfile.mkdtemp(prefix="djtest_"))
     config.DATA_DIR = tmp
@@ -39,15 +39,32 @@ def get_fixture():
     config.DB_PATH = tmp / "test.sqlite3"
     config.ensure_dirs()
 
-    from backend import db, ingest
+    from backend import ingest
+    from backend.db import Database
     from backend.timing import Timer
-    con = db.connect()
-    timer = Timer(con)
-    results = [ingest.ingest_track(con, e, "offline", timer) for e in FIXTURE_TRACKS]
+    database = Database.from_config().migrate()
+    timer = Timer(database)
+    results = [ingest.ingest_track(database, e, "offline", timer)
+               for e in FIXTURE_TRACKS]
 
-    _cache.update(con=con, results=results, tmp=tmp, timer=timer)
-    atexit.register(lambda: shutil.rmtree(tmp, ignore_errors=True))
-    return con, results, tmp
+    _cache.update(database=database, results=results, tmp=tmp, timer=timer)
+
+    def cleanup():
+        database.dispose()
+        shutil.rmtree(tmp, ignore_errors=True)
+
+    atexit.register(cleanup)
+    return database, results, tmp
+
+
+def read():
+    """A read scope on the fixture database, for use as a context manager:
+
+        with read() as q:
+            track = q.get_track(id="1001")
+    """
+    database, _, _ = get_fixture()
+    return database.reading()
 
 
 def spec(track_id):

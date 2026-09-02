@@ -10,6 +10,19 @@ VARIANT_DIR = DATA_DIR / "variants"     # tempo-matched renders
 DB_PATH = DATA_DIR / "catalog.sqlite3"
 TRACKS_CONFIG = Path(os.environ.get("DJMIXER_TRACKS", ROOT / "config" / "tracks.json"))
 
+#: Set to a Postgres connection string to run against Supabase in deployment;
+#: unset, the backend uses the local SQLite file at DB_PATH. Read through
+#: database_url() rather than directly — DB_PATH is reassigned by the test
+#: fixture and the benchmark, so the default has to be computed on demand.
+DATABASE_URL = os.environ.get("DJMIXER_DATABASE_URL")
+
+
+def database_url():
+    """The database URL in force. See docs/database.md."""
+    if DATABASE_URL:
+        return DATABASE_URL
+    return "sqlite:///" + str(DB_PATH)
+
 SAMPLE_RATE = 22050                     # prototype rate (see design doc §Audio format)
 FRAME_SIZE = 2048
 HOP_SIZE = 512

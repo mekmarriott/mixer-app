@@ -12,8 +12,10 @@ import tempfile
 import time
 from pathlib import Path
 
-from . import config, db, ingest, matching, transitions
+from . import config, ingest, matching, transitions
 from .analysis import rescale_analysis
+from .db import Database
+from .db.catalog import grid_bpms_by_track
 from .timing import Timer
 
 
@@ -33,42 +35,44 @@ def run(track_multiplier=1):
             e2["id"] = f"{e['id']}_{i}" if i else e["id"]
             entries.append(e2)
 
-    con = db.connect()
-    timer = Timer(con)
+    database = Database.from_url("sqlite:///" + str(config.DB_PATH)).migrate()
+    timer = Timer(database)
     t0 = time.perf_counter()
     for e in entries:
-        ingest.ingest_track(con, e, "offline", timer)
+        ingest.ingest_track(database, e, "offline", timer)
     total_ingest_s = time.perf_counter() - t0
 
-    mixable = [t for t in db.all_tracks(con) if t["mixable"]]
+    # A write scope: the timed sections below are reads, but Timer records each
+    # measurement, and a write scope cannot be opened inside a read one.
+    with database.writing() as q:
+        mixable = q.list_mixable_tracks(mixable=True)
+        grids = grid_bpms_by_track(q)
 
-    # Request-time op: recommendations (full catalog scan per query)
-    for t in mixable:
-        with timer.stage("recommend"):
-            matching.recommend(con, t["id"])
+        # Request-time op: recommendations (full catalog scan per query)
+        for t in mixable:
+            with timer.stage("recommend"):
+                matching.recommend(q, t.id)
 
-    # Request-time op: transition curve for representative pairs
-    pairs = 0
-    for a in mixable:
-        for b in mixable:
-            if a["id"] >= b["id"] or a["genre"] != b["genre"]:
-                continue
-            va = [v["grid_bpm"] for v in db.variants_for(con, a["id"])]
-            vb = [v["grid_bpm"] for v in db.variants_for(con, b["id"])]
-            shared = sorted(set(va) & set(vb))
-            if not shared:
-                continue
-            g = shared[0]
-            an_a = rescale_analysis(db.analysis_of(con, a["id"]), g / a["native_bpm"])
-            an_b = rescale_analysis(db.analysis_of(con, b["id"]), g / b["native_bpm"])
-            with timer.stage("transition_curve"):
-                transitions.score_pair(an_a, db.segments_of(con, a["id"]),
-                                       an_b, db.segments_of(con, b["id"]))
-            pairs += 1
+        # Request-time op: transition curve for representative pairs
+        pairs = 0
+        for a in mixable:
+            for b in mixable:
+                if a.id >= b.id or a.genre != b.genre:
+                    continue
+                shared = sorted(set(grids.get(a.id, [])) & set(grids.get(b.id, [])))
+                if not shared:
+                    continue
+                g = shared[0]
+                an_a = rescale_analysis(a.analysis_json, g / a.native_bpm)
+                an_b = rescale_analysis(b.analysis_json, g / b.native_bpm)
+                with timer.stage("transition_curve"):
+                    transitions.score_pair(an_a, a.segments_json,
+                                           an_b, b.segments_json)
+                pairs += 1
+                if pairs >= 8:
+                    break
             if pairs >= 8:
                 break
-        if pairs >= 8:
-            break
 
     stats = timer.by_stage()
     audio_bytes = sum(f.stat().st_size for f in config.AUDIO_DIR.glob("*.wav"))

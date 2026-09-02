@@ -30,12 +30,15 @@ def parse_license(name):
     }
 
 
-def attribution(track_row):
-    """Attribution payload the UI must display (tests P4-26..28)."""
+def attribution(track):
+    """Attribution payload the UI must display (tests P4-26..28).
+
+    `track` is any row carrying name/artist/license \u2014 a ``db.Track`` or the
+    blob-free ``db.ListTrackSummariesRow``."""
     return {
-        "text": f"\u201c{track_row['name']}\u201d by {track_row['artist']}",
-        "artist": track_row["artist"],
-        "title": track_row["name"],
-        "license": track_row["license"],
-        "license_url": CC_URLS[track_row["license"]],
+        "text": f"\u201c{track.name}\u201d by {track.artist}",
+        "artist": track.artist,
+        "title": track.name,
+        "license": track.license,
+        "license_url": CC_URLS[track.license],
     }

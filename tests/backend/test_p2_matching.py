@@ -1,33 +1,39 @@
 """Phase 2 — Matching & recommendation logic (testing-document P2-01..P2-05)."""
+import dataclasses
 import unittest
 
-from fixture import get_fixture
+from fixture import get_fixture, read
 
-from backend import bpm_grid, config, db, matching
+from backend import config, matching
+from backend.db.catalog import grid_bpms_by_track
 
 
-def _rec_inputs(con, a_id, b_id):
-    a, b = db.get_track(con, a_id), db.get_track(con, b_id)
-    return (a, b, db.analysis_of(con, a_id), db.segments_of(con, a_id),
-            db.analysis_of(con, b_id), db.segments_of(con, b_id),
-            db.variants_for(con, a_id), db.variants_for(con, b_id))
+def _rec_inputs(q, a_id, b_id):
+    """(track_a, track_b, analysis_a, segments_a, analysis_b, segments_b,
+    grid_a, grid_b) — the argument tuple matching.match() takes."""
+    a, b = q.get_track(id=a_id), q.get_track(id=b_id)
+    grids = grid_bpms_by_track(q)
+    return (a, b, a.analysis_json, a.segments_json,
+            b.analysis_json, b.segments_json,
+            grids.get(a_id, []), grids.get(b_id, []))
 
 
 class TestP2Matching(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.con, _, _ = get_fixture()
+        cls.database, _, _ = get_fixture()
 
     # ------------------------------------------------------------- P2-01
     def test_p2_01_candidates_share_grid_point(self):
         """P2-01: every recommended candidate shares >=1 grid BPM with the
         current track; cross-bucket tracks (no shared point) never appear."""
-        recs = matching.recommend(self.con, "1001")
+        with read() as q:
+            recs = matching.recommend(q, "1001")
+            grids = grid_bpms_by_track(q)
         self.assertGreater(len(recs), 0)
-        my_grid = {v["grid_bpm"] for v in db.variants_for(self.con, "1001")}
+        my_grid = set(grids["1001"])
         for r in recs:
-            other = {v["grid_bpm"] for v in db.variants_for(self.con, r["track_id"])}
-            self.assertTrue(my_grid & other, r["track_id"])
+            self.assertTrue(my_grid & set(grids[r["track_id"]]), r["track_id"])
             self.assertTrue(r["shared_grid"])
         # 2001 is downtempo: no shared grid with house 1001 -> excluded
         self.assertNotIn("2001", [r["track_id"] for r in recs])
@@ -35,8 +41,8 @@ class TestP2Matching(unittest.TestCase):
     # ------------------------------------------------------------- P2-02
     def test_p2_02_weighted_formula(self):
         """P2-02: total == W_BPM*bpm + W_KEY*key + W_ENERGY*energy."""
-        a, b, an_a, sg_a, an_b, sg_b, va, vb = _rec_inputs(self.con, "1001", "1003")
-        m = matching.match(a, b, an_a, sg_a, an_b, sg_b, va, vb)
+        with read() as q:
+            m = matching.match(*_rec_inputs(q, "1001", "1003"))
         bd = m["breakdown"]
         expected = (config.WEIGHT_BPM * bd["bpm"] + config.WEIGHT_KEY * bd["key"]
                     + config.WEIGHT_ENERGY * bd["energy"])
@@ -70,36 +76,39 @@ class TestP2Matching(unittest.TestCase):
     def test_p2_03_breakdown_in_response(self):
         """P2-03: recommendations expose the component breakdown and each
         component matches its independently computed value."""
-        recs = matching.recommend(self.con, "1001")
-        for r in recs:
-            self.assertIn("breakdown", r)
-            for k in ("bpm", "key", "energy", "weights"):
-                self.assertIn(k, r["breakdown"])
-            a, b, an_a, sg_a, an_b, sg_b, va, vb = _rec_inputs(
-                self.con, "1001", r["track_id"])
-            self.assertAlmostEqual(
-                r["breakdown"]["key"],
-                matching.CAMELOT_TABLE[(a["camelot"], b["camelot"])], places=4)
-            self.assertAlmostEqual(
-                r["breakdown"]["energy"],
-                matching.energy_continuity(an_a, sg_a, an_b, sg_b), places=3)
+        with read() as q:
+            recs = matching.recommend(q, "1001")
+            for r in recs:
+                self.assertIn("breakdown", r)
+                for k in ("bpm", "key", "energy", "weights"):
+                    self.assertIn(k, r["breakdown"])
+                a, b, an_a, sg_a, an_b, sg_b, _, _ = _rec_inputs(
+                    q, "1001", r["track_id"])
+                self.assertAlmostEqual(
+                    r["breakdown"]["key"],
+                    matching.CAMELOT_TABLE[(a.camelot, b.camelot)], places=4)
+                self.assertAlmostEqual(
+                    r["breakdown"]["energy"],
+                    matching.energy_continuity(an_a, sg_a, an_b, sg_b), places=3)
 
     # ------------------------------------------------------------- P2-04
     def test_p2_04_cutoff_excludes_low_scores(self):
         """P2-04: candidates below MATCH_SCORE_CUTOFF are excluded."""
-        recs = matching.recommend(self.con, "1001")
-        for r in recs:
-            self.assertGreaterEqual(r["score"], config.MATCH_SCORE_CUTOFF)
-        # Force a low score: distant key kills the key term; verify a
-        # sub-cutoff synthetic match would be filtered by the same rule.
-        a, b, an_a, sg_a, an_b, sg_b, va, vb = _rec_inputs(self.con, "1001", "1003")
-        b_far = dict(b, camelot="2B")     # hostile key
-        m = matching.match(a, b_far, an_a, sg_a, an_b, sg_b, va, vb)
+        with read() as q:
+            recs = matching.recommend(q, "1001")
+            for r in recs:
+                self.assertGreaterEqual(r["score"], config.MATCH_SCORE_CUTOFF)
+            # Force a low score: distant key kills the key term; verify a
+            # sub-cutoff synthetic match would be filtered by the same rule.
+            a, b, an_a, sg_a, an_b, sg_b, ga, gb = _rec_inputs(q, "1001", "1003")
+        b_far = dataclasses.replace(b, camelot="2B")     # hostile key
+        m = matching.match(a, b_far, an_a, sg_a, an_b, sg_b, ga, gb)
         self.assertLess(m["breakdown"]["key"], 0.2)
 
     # ------------------------------------------------------------- P2-05
     def test_p2_05_sorted_descending(self):
-        recs = matching.recommend(self.con, "1001")
+        with read() as q:
+            recs = matching.recommend(q, "1001")
         scores = [r["score"] for r in recs]
         self.assertEqual(scores, sorted(scores, reverse=True))
 
@@ -107,9 +116,10 @@ class TestP2Matching(unittest.TestCase):
     def test_nd_tracks_never_recommended(self):
         """ND (non-mixable) tracks are not candidates and get no
         recommendations themselves (requirements.md §2)."""
-        recs = matching.recommend(self.con, "1001")
-        self.assertNotIn("1005", [r["track_id"] for r in recs])
-        self.assertEqual(matching.recommend(self.con, "1005"), [])
+        with read() as q:
+            recs = matching.recommend(q, "1001")
+            self.assertNotIn("1005", [r["track_id"] for r in recs])
+            self.assertEqual(matching.recommend(q, "1005"), [])
 
 
 if __name__ == "__main__":

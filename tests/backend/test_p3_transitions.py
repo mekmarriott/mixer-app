@@ -1,25 +1,26 @@
 """Phase 3 — Transition-point detection (testing-document P3-01..P3-05)."""
 import unittest
 
-from fixture import get_fixture
+from fixture import get_fixture, read
 
-from backend import db, transitions
+from backend import transitions
 from backend.analysis import rescale_analysis
 from backend.segmentation import ENTRY_ROLES, EXIT_ROLES
 
 
-def _pair(con, a_id, b_id, grid):
-    a, b = db.get_track(con, a_id), db.get_track(con, b_id)
-    an_a = rescale_analysis(db.analysis_of(con, a_id), grid / a["native_bpm"])
-    an_b = rescale_analysis(db.analysis_of(con, b_id), grid / b["native_bpm"])
-    return an_a, db.segments_of(con, a_id), an_b, db.segments_of(con, b_id)
+def _pair(a_id, b_id, grid):
+    with read() as q:
+        a, b = q.get_track(id=a_id), q.get_track(id=b_id)
+    an_a = rescale_analysis(a.analysis_json, grid / a.native_bpm)
+    an_b = rescale_analysis(b.analysis_json, grid / b.native_bpm)
+    return an_a, a.segments_json, an_b, b.segments_json
 
 
 class TestP3Transitions(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.con, _, _ = get_fixture()
-        cls.an_a, cls.sg_a, cls.an_b, cls.sg_b = _pair(cls.con, "1001", "1003", 123)
+        cls.database, _, _ = get_fixture()
+        cls.an_a, cls.sg_a, cls.an_b, cls.sg_b = _pair("1001", "1003", 123)
         cls.result = transitions.score_pair(cls.an_a, cls.sg_a, cls.an_b, cls.sg_b)
 
     # ------------------------------------------------------------- P3-01

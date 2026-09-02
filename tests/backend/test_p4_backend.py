@@ -4,17 +4,18 @@ covered by the frontend suite (tests/frontend/) and the manual QA list in
 docs/design-document.md."""
 import unittest
 
-from fixture import get_fixture
+from fixture import get_fixture, read
 
-from backend import db
 from backend.app import create_app
 
 
 class TestP4Backend(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.con, _, cls.tmp = get_fixture()
-        app = create_app(run_ingestion=False)
+        cls.database, _, cls.tmp = get_fixture()
+        # Mount the API on the fixture database rather than letting the app
+        # factory open its own — same handle, so reads see fixture writes.
+        app = create_app(run_ingestion=False, database=cls.database)
         app.config["TESTING"] = True
         cls.client = app.test_client()
 
@@ -41,7 +42,8 @@ class TestP4Backend(unittest.TestCase):
         self.assertEqual(r.status_code, 200)
         d = r.get_json()
         self.assertEqual(len(d["points"]), 50)
-        a = db.analysis_of(self.con, "1001")
+        with read() as q:
+            a = q.get_track_analysis(id="1001")
         peak = max(a["frames"]["rms"])
         # First and last envelope points correspond to first/last rms frames.
         self.assertAlmostEqual(d["points"][0], a["frames"]["rms"][0] / peak, places=2)
@@ -50,7 +52,8 @@ class TestP4Backend(unittest.TestCase):
 
     def test_p4_11_waveform_bpm_rescale(self):
         """Waveform at a grid BPM rescales duration/beat grid by the ratio."""
-        a = db.analysis_of(self.con, "1001")
+        with read() as q:
+            a = q.get_track_analysis(id="1001")
         r = self.client.get("/api/tracks/1001/waveform?points=50&bpm=123").get_json()
         ratio = 123 / a["bpm"]
         self.assertAlmostEqual(r["duration_s"], a["duration_s"] / ratio, places=3)

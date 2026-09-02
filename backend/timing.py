@@ -4,8 +4,10 @@ from contextlib import contextmanager
 
 
 class Timer:
-    def __init__(self, con=None):
-        self.con = con
+    def __init__(self, database=None):
+        """`database` is a backend.db.Database; omit it to measure without
+        persisting (the benchmark aggregates in memory either way)."""
+        self.database = database
         self.records = []   # (stage, track_id, ms)
 
     @contextmanager
@@ -16,9 +18,8 @@ class Timer:
         finally:
             ms = (time.perf_counter() - t0) * 1000.0
             self.records.append((name, track_id, ms))
-            if self.con is not None:
-                from . import db
-                db.record_latency(self.con, name, track_id, ms, time.time())
+            if self.database is not None:
+                self.database.catalog.record_latency(name, track_id, ms, time.time())
 
     def by_stage(self):
         agg = {}

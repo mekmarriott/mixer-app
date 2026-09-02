@@ -11,6 +11,7 @@ import numpy as np
 
 from . import bpm_grid, config
 from .analysis import window_mean
+from .db.catalog import grid_bpms_by_track
 
 _NUMS = list(range(1, 13))
 
@@ -76,17 +77,20 @@ def energy_continuity(analysis_a, segments_a, analysis_b, segments_b):
 
 
 def match(track_a, track_b, analysis_a, segments_a, analysis_b, segments_b,
-          variants_a, variants_b):
-    """Score candidate B against current A. Returns dict w/ breakdown (P2-03)."""
-    shared = bpm_grid.shared_grid([v["grid_bpm"] for v in variants_a],
-                                  [v["grid_bpm"] for v in variants_b])
-    s_bpm, best_grid = bpm_score(track_a["native_bpm"], track_b["native_bpm"], shared)
-    s_key = CAMELOT_TABLE[(track_a["camelot"], track_b["camelot"])]
+          grid_a, grid_b):
+    """Score candidate B against current A. Returns dict w/ breakdown (P2-03).
+
+    `track_a`/`track_b` are ``db.Track`` rows; `grid_a`/`grid_b` are the tracks'
+    rendered grid BPMs.
+    """
+    shared = bpm_grid.shared_grid(grid_a, grid_b)
+    s_bpm, best_grid = bpm_score(track_a.native_bpm, track_b.native_bpm, shared)
+    s_key = CAMELOT_TABLE[(track_a.camelot, track_b.camelot)]
     s_energy = energy_continuity(analysis_a, segments_a, analysis_b, segments_b)
     total = (config.WEIGHT_BPM * s_bpm + config.WEIGHT_KEY * s_key
              + config.WEIGHT_ENERGY * s_energy)
     return {
-        "track_id": track_b["id"],
+        "track_id": track_b.id,
         "score": round(float(total), 4),
         "breakdown": {
             "bpm": round(float(s_bpm), 4),
@@ -100,33 +104,36 @@ def match(track_a, track_b, analysis_a, segments_a, analysis_b, segments_b,
     }
 
 
-def recommend(con, track_id):
+def recommend(q, track_id, grids=None):
     """Ranked candidates for `track_id` (P2-01..P2-05). ND (non-mixable)
     tracks are never candidates; candidates must share >=1 grid point and
-    clear the score cutoff."""
-    from . import db
-    a = db.get_track(con, track_id)
-    if not a or not a["mixable"]:
+    clear the score cutoff.
+
+    `q` is a ``db.Queries`` scope. `grids` is the catalog-wide
+    ``{track_id: [grid_bpm]}`` map; it is fetched in one query when not given.
+    """
+    a = q.get_track(id=track_id)
+    if not a or not a.mixable:
         return []
-    an_a = db.analysis_of(con, track_id)
-    seg_a = db.segments_of(con, track_id)
-    var_a = db.variants_for(con, track_id)
+    if grids is None:
+        grids = grid_bpms_by_track(q)
+    an_a = a.analysis_json
+    seg_a = a.segments_json
+    grid_a = grids.get(track_id, [])
 
     out = []
-    for b in db.all_tracks(con):
-        if b["id"] == track_id or not b["mixable"]:
+    for b in q.list_mixable_tracks(mixable=True):
+        if b.id == track_id:
             continue
-        var_b = db.variants_for(con, b["id"])
-        if not bpm_grid.shared_grid([v["grid_bpm"] for v in var_a],
-                                    [v["grid_bpm"] for v in var_b]):
+        grid_b = grids.get(b.id, [])
+        if not bpm_grid.shared_grid(grid_a, grid_b):
             continue                                            # P2-01
-        m = match(a, b, an_a, seg_a,
-                  db.analysis_of(con, b["id"]), db.segments_of(con, b["id"]),
-                  var_a, var_b)
+        m = match(a, b, an_a, seg_a, b.analysis_json, b.segments_json,
+                  grid_a, grid_b)
         if m["score"] < config.MATCH_SCORE_CUTOFF:              # P2-04
             continue
-        m["name"] = b["name"]
-        m["artist"] = b["artist"]
+        m["name"] = b.name
+        m["artist"] = b.artist
         out.append(m)
     out.sort(key=lambda m: m["score"], reverse=True)            # P2-05
     return out
