@@ -9,6 +9,7 @@ these tests cannot reach is deliberately kept trivial.
 """
 import time
 import unittest
+from unittest import mock
 
 from fixture import get_fixture, read
 
@@ -137,6 +138,44 @@ class TestVercelBlobStoreConfig(unittest.TestCase):
         with self.assertRaises(storage.BlobStoreError) as ctx:
             store.url_for("audio/1001.wav")
         self.assertIn("BLOB_BASE_URL", str(ctx.exception))
+
+    def _fake_cli(self, stdout="", stderr="", returncode=0):
+        """Patch out the subprocess so put_file's output handling is testable."""
+        return (mock.patch.object(storage.subprocess, "run",
+                                  return_value=mock.Mock(returncode=returncode,
+                                                         stdout=stdout, stderr=stderr)),
+                mock.patch.object(storage.shutil, "which", return_value="/bin/vercel"))
+
+    def test_success_url_is_read_from_stderr(self):
+        """`vercel blob put` writes "Success! <url>" — and everything else — to
+        stderr, leaving stdout empty. Verified against the real CLI (59.11.1).
+        Scanning stdout alone finds no URL, so every upload that in fact
+        succeeded raised "could not parse blob URL from CLI output: ''"."""
+        url = "https://s.blob.vercel-storage.com/audio/1001.wav"
+        store = storage.VercelBlobStore(access="public", base_url="https://s")
+        run, which = self._fake_cli(stderr=f"Uploading blob\n> Success! {url}\n")
+        with run, which:
+            self.assertEqual(store.put_file("audio/1001.wav", "/tmp/x.wav"),
+                             "audio/1001.wav")
+        self.assertEqual(store.url_for("audio/1001.wav"), url)
+
+    def test_private_upload_does_not_require_a_url(self):
+        """A private store has no anonymously readable URL to report, so
+        demanding one would fail an upload that actually succeeded."""
+        store = storage.VercelBlobStore(access="private", base_url="https://s")
+        run, which = self._fake_cli(stderr="Uploading blob\n")
+        with run, which:
+            self.assertEqual(store.put_file("audio/1001.wav", "/tmp/x.wav"),
+                             "audio/1001.wav")
+
+    def test_public_upload_without_a_url_is_still_an_error(self):
+        """The relaxation above must not hide a genuinely missing URL on the
+        one access level whose serving path needs it."""
+        store = storage.VercelBlobStore(access="public", base_url="https://s")
+        run, which = self._fake_cli(stderr="Uploading blob\n")
+        with run, which:
+            with self.assertRaises(storage.BlobStoreError):
+                store.put_file("audio/1001.wav", "/tmp/x.wav")
 
 
 class TestTokenBucket(unittest.TestCase):

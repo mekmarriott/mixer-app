@@ -199,7 +199,10 @@ class VercelBlobStore(BlobStore):
             raise BlobStoreError(
                 f"vercel blob {' '.join(args)} failed ({proc.returncode}): "
                 f"{proc.stderr.strip() or proc.stdout.strip()}")
-        return proc.stdout
+        # Both streams. The CLI writes its progress *and* its "Success! <url>"
+        # line to stderr, leaving stdout empty, so scanning stdout alone finds
+        # no URL and makes every successful upload look like a parse failure.
+        return f"{proc.stdout}\n{proc.stderr}"
 
     def put_file(self, key, src_path, content_type=None):
         args = [
@@ -216,9 +219,14 @@ class VercelBlobStore(BlobStore):
             args += ["--rw-token", self.token]
         out = self._run(args)
         m = self.URL_RE.search(out)
-        if not m:
+        if m:
+            self._urls[key] = m.group(0)
+        elif self.access == "public":
+            # Only a public store owes us a servable URL; without it the
+            # serving path has nothing to redirect to. A private store has no
+            # such URL to report, and demanding one would fail an upload that
+            # actually succeeded.
             raise BlobStoreError(f"could not parse blob URL from CLI output: {out!r}")
-        self._urls[key] = m.group(0)
         return key
 
     def put_bytes(self, key, data, content_type=None):
