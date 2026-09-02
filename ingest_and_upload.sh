@@ -57,7 +57,16 @@ set +a
 # token, and the Vercel integration writes BLOB_STORE_ID into .env on its own.
 unset BLOB_STORE_ID
 
-VERCEL_CLI=${VERCEL_CLI:-"npx --yes vercel@latest"}
+# Prefer a globally installed CLI. `npx` re-resolves the package on every
+# invocation, which is several seconds of process startup before a byte moves —
+# invisible for a handful of objects and the dominant cost for thousands.
+if [ -z "${VERCEL_CLI:-}" ]; then
+  if command -v vercel >/dev/null 2>&1; then
+    VERCEL_CLI=vercel
+  else
+    VERCEL_CLI="npx --yes vercel@latest"
+  fi
+fi
 REMOTE_DB=${REMOTE_DB:-$MIX_DB_POSTGRES_URL}
 : "${BLOB_BASE_URL:=https://9fj05rbnkmudvmgn.public.blob.vercel-storage.com}"
 export BLOB_BASE_URL
