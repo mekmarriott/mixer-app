@@ -319,11 +319,27 @@ async function addNextTrack(trackId) {
   const meta = catalog.find((c) => c.id === trackId);
   // The marker offset is relative to the PREVIOUS track's start, which is
   // exactly what a delta is — so the snap needs no conversion.
+  // Add provisionally, then place. The floor depends on the chain geometry —
+  // specifically on the track two back — so it can only be computed once this
+  // track is in the chain.
   const res = state.addTrack(mix, {
     id: meta.id, name: meta.name, artist: meta.artist,
     duration: wfB.duration_s, bpm: gridBpm,
-  }, align.dropOffset(currentMarkers, a.duration));
+  }, 0);
   if (!res.ok) return toast(res.reason);
+
+  // The best marker is not always a legal position: it can place the incoming
+  // track early enough to reach back into its second-nearest predecessor, and
+  // the server refuses that (3 tracks on the grid at once). The drag path has
+  // always clamped; the drop path did not, so a drop could propose a placement
+  // the API had to reject — the save failed with a 409 and the mix silently
+  // did not persist.
+  const placedIndex = mix.tracks.length - 1;
+  const prevStart = state.offsets(mix)[placedIndex - 1] ?? 0;
+  const minDelta = Math.max(0, state.minOffsetFor(mix, placedIndex) - prevStart);
+  state.setDelta(mix, meta.id, align.placementOffset(currentMarkers, {
+    prevDuration: a.duration, minDelta,
+  }));
 
   junctions.set(lastIndex, { markers: currentMarkers, gridBpm });
   timeline.setWaveform(meta.id, wfB);

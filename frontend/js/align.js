@@ -38,6 +38,29 @@ export function dropOffset(markers, prevDuration = 0, overlapS = DEFAULT_OVERLAP
   return Math.max(0, prevDuration - overlapS);
 }
 
+/**
+ * Where an incoming track lands, honouring the floor imposed by "at most two
+ * tracks overlap".
+ *
+ * The highest-scoring marker is not always a legal position: it can place the
+ * incoming track early enough to reach back into its second-nearest
+ * predecessor, which the server refuses (backend/mixes.check_overlaps). So the
+ * best marker AT OR AFTER the floor wins, and only if no marker qualifies does
+ * the floor itself apply.
+ *
+ * Choosing the best legal marker rather than clamping the best marker forward
+ * matters: clamping lands the track on no marker at all, whereas the next
+ * marker down is still a scored, beat-aligned transition.
+ */
+export function placementOffset(markers, {
+  prevDuration = 0, minDelta = 0, overlapS = DEFAULT_OVERLAP_S,
+} = {}) {
+  const legal = (markers || []).filter((m) => markerToOffset(m) >= minDelta - 1e-9);
+  const best = bestMarker(legal);
+  if (best) return markerToOffset(best);
+  return Math.max(minDelta, Math.max(0, prevDuration - overlapS));
+}
+
 // Beat-grid quantization — a HARD constraint, not a preference.
 //
 // Previously this was a magnetic *pull*: strong near an attractor, absent

@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import {
   markerToOffset, bestMarker, snapOffset, snapOffsetTo, nearestBeat,
   quantizeToBeats, beatsBetween, markerSizePx, MARKER_RADIUS_S,
-  dropOffset, DEFAULT_OVERLAP_S,
+  dropOffset, DEFAULT_OVERLAP_S, placementOffset,
 } from "../../frontend/js/align.js";
 
 const marker = (a, b, score) => ({ a_start_s: a, b_start_s: b, score });
@@ -153,4 +153,60 @@ test("P4-20: size is bounded and clamps out-of-range scores", () => {
   assert.equal(markerSizePx(2, 10, 26, scores), 26);
   // A single marker has nothing to compare against: absolute scale.
   assert.equal(markerSizePx(0.5, 10, 26, [0.5]), 18);
+});
+
+
+test("P4-16c: placement takes the best marker AT OR AFTER the legal floor", () => {
+  // Offsets are 20, 45 and 56. The top-scoring one (20) would reach back into
+  // the track two before this one, so 45 is the earliest legal start.
+  const ms = [marker(22, 2, 0.95), marker(50, 5, 0.80), marker(60, 4, 0.70)];
+  const out = placementOffset(ms, { minDelta: 45, prevDuration: 60 });
+
+  // It lands on the best LEGAL marker (offset 45, score 0.80) — not the
+  // highest-scoring one, and not a bare clamp of it forward to the floor.
+  assert.equal(out, 45);
+  assert.notEqual(out, 20);
+});
+
+test("P4-16c: with no floor, placement is just the best marker", () => {
+  const ms = [marker(22, 2, 0.95), marker(50, 5, 0.80)];
+  assert.equal(placementOffset(ms, { minDelta: 0, prevDuration: 60 }), 20);
+  assert.equal(placementOffset(ms, { prevDuration: 60 }), dropOffset(ms, 60));
+});
+
+test("P4-16c: when NO marker is legal, placement is legal and still musical", () => {
+  const ms = [marker(10, 2, 0.95), marker(12, 3, 0.9)];   // offsets 8 and 9
+  const out = placementOffset(ms, { minDelta: 40, prevDuration: 60 });
+  // Both constraints hold: at or after the floor, and a plain tail crossfade
+  // rather than sitting exactly on a limit derived from a neighbour.
+  assert.ok(out >= 40);
+  assert.equal(out, 60 - DEFAULT_OVERLAP_S);
+});
+
+test("P4-16c: a floor later than the tail default still wins", () => {
+  const ms = [marker(10, 2, 0.95)];
+  assert.equal(placementOffset(ms, { minDelta: 52, prevDuration: 60 }), 52);
+});
+
+test("P4-16c: the floor always wins over the markerless fallback", () => {
+  // prevDuration - DEFAULT_OVERLAP_S would be 44, but 50 is the legal floor.
+  assert.equal(placementOffset([], { minDelta: 50, prevDuration: 60 }), 50);
+  // And with a floor of 0 it is the ordinary tail overlap.
+  assert.equal(placementOffset([], { minDelta: 0, prevDuration: 60 }),
+               60 - DEFAULT_OVERLAP_S);
+});
+
+test("P4-16c: a placement is never below the floor, for any marker set", () => {
+  const sets = [
+    [], null,
+    [marker(5, 1, 0.9)],
+    [marker(5, 1, 0.9), marker(80, 2, 0.95), marker(40, 30, 0.99)],
+  ];
+  for (const set of sets) {
+    for (const floor of [0, 10, 45, 100]) {
+      const out = placementOffset(set, { minDelta: floor, prevDuration: 60 });
+      assert.ok(out >= floor - 1e-9,
+        `set=${JSON.stringify(set)} floor=${floor} -> ${out}`);
+    }
+  }
 });

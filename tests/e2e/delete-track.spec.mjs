@@ -10,7 +10,7 @@
 // and pinning a click to an index would test the arithmetic in the test.
 import { test, expect } from "@playwright/test";
 import { bootApp, addFirstTrack, addSecondTrack, dragRowToTimeline,
-         DRAGGABLE_ROW, timelineBox } from "./helpers.mjs";
+         DRAGGABLE_ROW, timelineBox, expectNoFailedWrites } from "./helpers.mjs";
 
 /** The persisted chain, which is the thing that has to be correct. */
 async function chain(page) {
@@ -49,6 +49,11 @@ async function buildChain(page, max = 4) {
     await expect(page.locator("#attributions span")).toHaveCount(ch.length + 1);
     ch = await settled(page, ch.length + 1);
   }
+
+  // Every add must have been accepted by the server. A rejected save leaves
+  // the chain shorter than the UI shows, and the failure then surfaces as a
+  // confusing timeout further down instead of at its cause.
+  expectNoFailedWrites();
 
   // Reload so the viewport spans the whole mix. Adding a track pans the view
   // to reveal the new junction, which leaves the visible window offset — and

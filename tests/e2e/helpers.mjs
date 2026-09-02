@@ -17,6 +17,21 @@ export const COLORS = {
 export const MARKER_LANE_H = 30;
 
 const DECK_ROW = "#deck .deck-row";
+
+/** API writes that came back non-2xx during the current test. */
+let failedWrites = [];
+
+/**
+ * Assert the app never had a write rejected.
+ *
+ * Call at the end of any test that mutates a mix. A rejected PUT/PATCH means
+ * the UI proposed a state the API refuses — the mix silently does not persist,
+ * which is a product bug however green the rest of the assertions look.
+ */
+export function expectNoFailedWrites() {
+  expect(failedWrites, `the app had API writes rejected:\n${failedWrites.join("\n")}`)
+    .toEqual([]);
+}
 export const DRAGGABLE_ROW = `${DECK_ROW}[draggable="true"]`;
 
 /**
@@ -28,10 +43,30 @@ export const DRAGGABLE_ROW = `${DECK_ROW}[draggable="true"]`;
  * also exercises the real resume path rather than a test-only shortcut.
  */
 export async function bootApp(page, { fresh = true } = {}) {
+  failedWrites = [];
   await page.goto("/");
   await expect(page.locator(DECK_ROW).first()).toBeVisible({ timeout: 60_000 });
 
+  // Any API write that FAILS during a test is a defect, not a slow test. Left
+  // unwatched it surfaces as a downstream timeout ("chain never reached 3
+  // tracks") that reads like flakiness and hides the actual 409.
+  page.on("response", (r) => {
+    const path = new URL(r.url()).pathname;
+    if (path.startsWith("/api/") && r.request().method() !== "GET" && !r.ok()) {
+      failedWrites.push(`${r.request().method()} ${path} -> ${r.status()}`);
+    }
+  });
+
   if (fresh) {
+    // Mixes accumulate in the shared data-e2e catalog and nothing removes
+    // them, so the picker grows with run history and any test reasoning about
+    // "the mixes list" would be reasoning about previous runs. Start clean.
+    await page.evaluate(async () => {
+      const existing = await (await fetch("/api/mixes")).json();
+      await Promise.all(existing.map((m) =>
+        fetch(`/api/mixes/${m.id}`, { method: "DELETE" })));
+    });
+
     const created = await page.evaluate(() =>
       fetch("/api/mixes", {
         method: "POST",

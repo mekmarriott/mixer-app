@@ -17,8 +17,8 @@ grep -rhoE "P[1-4]-[0-9]{2}" tests/ | sort -u
 
 | Suite | Runner | Count | Runs in | What it is for |
 |---|---|---|---|---|
-| **Backend** | `unittest` (stdlib) | 222 | ~12 s | Pipeline, compliance gates, API contract, startup precompute and DB concurrency. Builds a real 5-track fixture catalog through one full ingestion. |
-| **Frontend logic** | `node:test` (stdlib) | 70 | <1 s | The pure interaction modules (`state`, `align`, `crossfade`, `navbar`, `deck`, `attribution`, `boot`) — no DOM, no WebAudio. |
+| **Backend** | `unittest` (stdlib) | 227 | ~12 s | Pipeline, compliance gates, API contract, startup precompute and DB concurrency. Builds a real 5-track fixture catalog through one full ingestion. |
+| **Frontend logic** | `node:test` (stdlib) | 76 | <1 s | The pure interaction modules (`state`, `align`, `crossfade`, `navbar`, `deck`, `attribution`, `boot`) — no DOM, no WebAudio. |
 | **Browser** | Playwright + Chromium | 32 | ~57 s | What the other two structurally cannot reach: native drag-and-drop, canvas pixels, the WebAudio clock, and real network behaviour. |
 | **Manual** | a human with ears | 1 | — | Perceptual judgement only. |
 
@@ -167,6 +167,20 @@ which predates them.
 | ZS-04 | Status endpoint reports readiness and pool bounds | Browser | `ZS-04 status endpoint reports readiness and pool bounds` |
 | ZS-05 | Boot overlay is dismissed once the catalog is ready | Browser | `ZS-05 the boot overlay is dismissed once the catalog is ready` |
 
+### Run the backend suite through `run_tests.sh`, not `unittest` directly
+
+`.env.local` is committed and sets `DJMIXER_DATABASE_URL` to the shared local
+PostgreSQL, so a bare `python -m unittest discover -s tests/backend` builds its
+fixture in the DEVELOPER'S catalog rather than a temp SQLite file. The symptom
+is a dozen unrelated failures — `spec()` raising `StopIteration` on tracks it
+has never heard of, empty variant lists — because the fixture is looking at
+someone else's data, and it writes its own rows there as a side effect.
+
+`run_tests.sh` passes `DJMIXER_DATABASE_URL=` (empty) for exactly this reason,
+and `make test-pg` sets it explicitly to a dedicated `djmixer_test` database.
+Both are safe; the bare invocation is not. If the backend suite fails in ways
+that make no sense, check how it was invoked before reading the diff.
+
 ### Suite determinism
 
 The browser suite shares one server and one SQLite catalog across all 32 tests,
@@ -180,6 +194,17 @@ spec file passed in isolation, which reads like an environment problem and is
 easy to misattribute to whatever diff is in hand. Every test now selects its
 mix explicitly through the picker. Five consecutive cold runs (`rm -rf
 data-e2e/`) pass 32/32.
+
+`bootApp` now also deletes every existing mix before creating its own: mixes
+accumulate in the shared `data-e2e` catalog and nothing removed them, so the
+picker grew with run history and any test reasoning about "the mixes list" was
+reasoning about previous runs.
+
+A second guard catches the class of bug that hid behind the first. Any non-GET
+`/api/` response that is not 2xx during a test is recorded, and
+`expectNoFailedWrites()` fails the test naming it. Without that, a rejected
+save surfaces as a downstream timeout ("chain never reached 3 tracks") that
+reads like flakiness and hides the actual 409.
 
 If the suite starts varying again, suspect shared state before suspecting a
 diff: the catalog, the mixes table, and a leftover server on port 5199 are the

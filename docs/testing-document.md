@@ -87,6 +87,7 @@
 - [ ] **P4-15** Dropped track ("Selected Track 2") renders as a distinctly colored waveform from Track 1
 - [ ] **P4-16** On drop, the incoming track auto-snaps to the highest-scoring mixing marker, and **visibly lands on that marker's arrow** — the arrow marks where the incoming track starts, not where the transition begins inside the outgoing one
 - [ ] **P4-16b** A pair with no candidate markers still places the incoming track sensibly (overlapping the previous track's tail), never stacked on top of it
+- [ ] **P4-16c** The placement chosen on drop is always legal: the best marker that does not reach back into the second-nearest predecessor, so a drop never proposes a chain the API refuses
 - [ ] **P4-17** In the shared transition zone, both waveforms render simultaneously; outside it, only the relevant single track renders
 - [ ] **P4-18** A mix accepts up to 100 tracks; the 101st is refused with a user-facing reason (raised from 2 — see `ui-requirements.md` §Overlay)
 - [ ] **P4-18b** Edits ripple rigidly: moving, inserting or deleting a track shifts every downstream track by the same amount, leaving later transitions unchanged

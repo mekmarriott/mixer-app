@@ -5,7 +5,7 @@ import { test, expect } from "@playwright/test";
 import {
   bootApp, addFirstTrack, addSecondTrack, dragRowToTimeline,
   sampleTimeline, sampleTimelineWhenDrawn, countMarkerClusters, DRAGGABLE_ROW,
-  COLORS, readClock,
+  COLORS, readClock, expectNoFailedWrites,
 } from "./helpers.mjs";
 
 test.describe("deck and two-track mixing state", () => {
@@ -82,6 +82,9 @@ test.describe("deck and two-track mixing state", () => {
     expect(added, "expected the chain to grow beyond two tracks").toBeGreaterThan(2);
     // Every track in the chain is attributed, not just the first two.
     await expect(page.locator("#attributions span")).toHaveCount(added);
+    // A drop must never propose a placement the server refuses: the best
+    // marker can reach back into the second-nearest predecessor.
+    expectNoFailedWrites();
   });
 
   test("P4-18b adding a track ripples the mix longer, never shorter", async ({ page }) => {
