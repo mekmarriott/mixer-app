@@ -405,20 +405,40 @@ def create_app(run_ingestion=True, database=None, warmup_async=False):
     def recommendations(tid):
         """Phase 2 ranking — the first computation that depends on a choice.
         Waveforms are inlined so the suggestion deck, like the zero-state deck,
-        needs no follow-up requests."""
+        needs no follow-up requests.
+
+        `limit`/`offset` page the ranked list. The deck shows one page and asks
+        for the next when the user scrolls to it, so the common request builds
+        ten payloads rather than every candidate that cleared the cutoff."""
+        limit = request.args.get("limit", type=int) or config.RECOMMENDATION_LIMIT
+        limit = max(1, min(limit, 50))
+        offset = max(0, request.args.get("offset", type=int) or 0)
         timer = Timer(database)
         with timer.stage("recommend", tid):
             with database.reading() as q:
-                recs = matching.recommend(q, tid)
+                # One blob-free read serves both halves: the columns scoring
+                # ranks on, and the envelope each returned row draws with.
+                #
+                # This loop used to call get_track per recommendation, which is
+                # SELECT *, so a twenty-row response pulled twenty analysis
+                # blobs back and downsampled each one inline. That, not the
+                # ranking, was the endpoint: the scan alone finished in about
+                # half a second while whole responses took nine to twenty-eight.
+                grids = grid_bpms_by_track(q)
+                rows = q.list_deck_rows()
+                # Rank everything, return a page. Ranking is arithmetic over
+                # columns now, so the full sort is far cheaper than the payload
+                # it would build; paging bounds the part that still costs.
+                ranked = matching.recommend(q, tid, grids=grids, rows=rows,
+                                            limit=0)
+                recs = ranked[offset:offset + limit]
+                by_id = {row.id: row for row in rows}
                 for r in recs:
-                    t = q.get_track(id=r["track_id"])
-                    if t:
-                        # get_track already carried the analysis blob back, so
-                        # the waveform for a candidate outside the warmed deck
-                        # costs no further query.
-                        r["track"] = track_payload(
-                            t, wf_points=config.DECK_WAVEFORM_POINTS,
-                            analysis_loader=lambda _id, t=t: t.analysis_json)
+                    row = by_id.get(r["track_id"])
+                    if row is None:
+                        continue
+                    r["track"] = track_payload(row, grids=grids)
+                    r["track"]["waveform"] = row.deck_waveform
         return jsonify(recs)
 
     @app.get("/api/transitions")

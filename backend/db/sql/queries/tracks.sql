@@ -31,6 +31,45 @@ SELECT id, name, artist, genre, license,
 FROM tracks
 ORDER BY id;
 
+-- Everything a recommendation response needs, blob-free, in one statement:
+-- the columns scoring reads and the envelope each deck row draws. Fetching the
+-- envelopes separately would mean either a round trip per winner or a second
+-- catalog-wide read; they are small enough to ride along with the scan that
+-- has to happen anyway.
+-- name: ListDeckRows :many
+-- columns: id TEXT, name TEXT, artist TEXT, genre TEXT, license TEXT,
+--          license_nd BOOLEAN, license_sa BOOLEAN, license_nc BOOLEAN,
+--          mixable BOOLEAN, native_bpm REAL, camelot TEXT, duration_s REAL,
+--          status TEXT, outro_energy REAL, intro_energy REAL,
+--          deck_waveform JSONDOC
+SELECT id, name, artist, genre, license,
+       license_nd, license_sa, license_nc,
+       mixable, native_bpm, camelot, duration_s, status,
+       outro_energy, intro_energy, deck_waveform
+FROM tracks
+ORDER BY id;
+
+-- The track being matched against, without dragging its blobs along.
+-- name: GetTrackSummary :one
+-- columns: id TEXT, name TEXT, artist TEXT, genre TEXT, license TEXT,
+--          license_nd BOOLEAN, license_sa BOOLEAN, license_nc BOOLEAN,
+--          mixable BOOLEAN, native_bpm REAL, camelot TEXT, duration_s REAL,
+--          status TEXT, outro_energy REAL, intro_energy REAL
+SELECT id, name, artist, genre, license,
+       license_nd, license_sa, license_nc,
+       mixable, native_bpm, camelot, duration_s, status,
+       outro_energy, intro_energy
+FROM tracks WHERE id = :id;
+
+-- name: SetTrackDeckWaveform :exec
+UPDATE tracks SET deck_waveform = :deck_waveform WHERE id = :id;
+
+-- name: ListTracksMissingDeckWaveform :many
+-- columns: id TEXT
+SELECT id FROM tracks
+WHERE analysis_json IS NOT NULL AND deck_waveform IS NULL
+ORDER BY id;
+
 -- name: CountTracks :scalar
 -- columns: n INTEGER
 SELECT COUNT(*) AS n FROM tracks;
@@ -89,7 +128,8 @@ ON CONFLICT (id) DO UPDATE SET
 -- the next run; the upsert deliberately cannot do it, since it COALESCEs.
 -- name: ClearTrackAnalysis :exec
 UPDATE tracks SET analysis_json = NULL, segments_json = NULL,
-                 outro_energy = NULL, intro_energy = NULL
+                 outro_energy = NULL, intro_energy = NULL,
+                 deck_waveform = NULL
 WHERE id = :id;
 
 -- name: SetTrackStatus :exec

@@ -52,8 +52,9 @@ export const api = {
   track: (id) => getJSON(`/api/tracks/${id}`),
   waveform: (id, bpm, points = 480) =>
     getJSON(`/api/tracks/${id}/waveform?points=${points}${bpm ? `&bpm=${bpm}` : ""}`),
-  recommendations: (id) =>
-    getJSON(`/api/tracks/${id}/recommendations`, { timeoutMs: 20000 }),
+  recommendations: (id, { limit = 10, offset = 0 } = {}) =>
+    getJSON(`/api/tracks/${id}/recommendations?limit=${limit}&offset=${offset}`,
+            { timeoutMs: 20000 }),
   transitions: (a, b) => getJSON(`/api/transitions?a=${a}&b=${b}`),
   credits: () => getJSON("/api/credits"),
 

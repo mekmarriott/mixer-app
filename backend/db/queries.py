@@ -61,6 +61,21 @@ ON CONFLICT (id) DO UPDATE SET
        outro_energy, intro_energy
 FROM tracks
 ORDER BY id""",
+    "ListDeckRows": """SELECT id, name, artist, genre, license,
+       license_nd, license_sa, license_nc,
+       mixable, native_bpm, camelot, duration_s, status,
+       outro_energy, intro_energy, deck_waveform
+FROM tracks
+ORDER BY id""",
+    "GetTrackSummary": """SELECT id, name, artist, genre, license,
+       license_nd, license_sa, license_nc,
+       mixable, native_bpm, camelot, duration_s, status,
+       outro_energy, intro_energy
+FROM tracks WHERE id = :id""",
+    "SetTrackDeckWaveform": """UPDATE tracks SET deck_waveform = :deck_waveform WHERE id = :id""",
+    "ListTracksMissingDeckWaveform": """SELECT id FROM tracks
+WHERE analysis_json IS NOT NULL AND deck_waveform IS NULL
+ORDER BY id""",
     "CountTracks": """SELECT COUNT(*) AS n FROM tracks""",
     "GetTrackAnalysis": """SELECT analysis_json FROM tracks WHERE id = :id""",
     "GetTrackSegments": """SELECT segments_json FROM tracks WHERE id = :id""",
@@ -96,7 +111,8 @@ ON CONFLICT (id) DO UPDATE SET
     analyzed_at   = COALESCE(EXCLUDED.analyzed_at, tracks.analyzed_at),
     ready_at      = COALESCE(EXCLUDED.ready_at, tracks.ready_at)""",
     "ClearTrackAnalysis": """UPDATE tracks SET analysis_json = NULL, segments_json = NULL,
-                 outro_energy = NULL, intro_energy = NULL
+                 outro_energy = NULL, intro_energy = NULL,
+                 deck_waveform = NULL
 WHERE id = :id""",
     "SetTrackStatus": """UPDATE tracks SET status = :status, status_error = NULL WHERE id = :id""",
     "MarkTrackFailed": """UPDATE tracks SET status_error = :status_error WHERE id = :id""",
@@ -356,6 +372,41 @@ class Queries:
         rows = cur.fetchall()
         cur.close()
         return [models.ListTrackSummariesRow._from_row(r) for r in rows]
+
+    def list_deck_rows(self):
+        """`ListDeckRows` (:many) -> list[ListDeckRowsRow]"""
+        params = {}
+        cur = self._execute("ListDeckRows", params)
+        rows = cur.fetchall()
+        cur.close()
+        return [models.ListDeckRowsRow._from_row(r) for r in rows]
+
+    def get_track_summary(self, id):
+        """`GetTrackSummary` (:one) -> GetTrackSummaryRow | None"""
+        params = {
+            "id": encode(id, "TEXT", self._dialect),
+        }
+        cur = self._execute("GetTrackSummary", params)
+        row = cur.fetchone()
+        cur.close()
+        return None if row is None else models.GetTrackSummaryRow._from_row(row)
+
+    def set_track_deck_waveform(self, deck_waveform, id):
+        """`SetTrackDeckWaveform` (:exec) -> None"""
+        params = {
+            "deck_waveform": encode(deck_waveform, "JSONDOC", self._dialect),
+            "id": encode(id, "TEXT", self._dialect),
+        }
+        cur = self._execute("SetTrackDeckWaveform", params)
+        cur.close()
+
+    def list_tracks_missing_deck_waveform(self):
+        """`ListTracksMissingDeckWaveform` (:many) -> list[ListTracksMissingDeckWaveformRow]"""
+        params = {}
+        cur = self._execute("ListTracksMissingDeckWaveform", params)
+        rows = cur.fetchall()
+        cur.close()
+        return [models.ListTracksMissingDeckWaveformRow._from_row(r) for r in rows]
 
     def count_tracks(self):
         """`CountTracks` (:scalar) -> int | None"""

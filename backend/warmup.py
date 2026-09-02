@@ -108,7 +108,7 @@ class Warmup:
             pass
 
     def _backfill_energies(self):
-        """Derive the stored energy columns for rows still missing them.
+        """Derive the stored scoring columns for rows still missing them.
 
         Matching falls back to reading analysis_json and segments_json when
         these are NULL — precisely the per-candidate blob read the columns
@@ -121,10 +121,14 @@ class Warmup:
         resumable: whatever a pass does not reach, the next one starts from,
         and an instance torn down mid-pass loses only the row in flight.
         """
-        from . import matching                       # lazy: see module header
+        from . import matching, waveforms            # lazy: see module header
         with self.database.reading() as q:
-            pending = [r.id for r in q.list_tracks_missing_energies()]
-        pending = pending[:ENERGY_BACKFILL_MAX_ROWS]
+            missing_energy = [r.id for r in q.list_tracks_missing_energies()]
+            missing_wf = [r.id for r in q.list_tracks_missing_deck_waveform()]
+        wanted = list(dict.fromkeys(missing_energy + missing_wf))
+        need_energy = set(missing_energy)
+        need_wf = set(missing_wf)
+        pending = wanted[:ENERGY_BACKFILL_MAX_ROWS]
         deadline = time.time() + ENERGY_BACKFILL_SECONDS
         done = 0
         for tid in pending:
@@ -133,15 +137,29 @@ class Warmup:
             with self.database.reading() as q:
                 analysis = q.get_track_analysis(id=tid)
                 segments = q.get_track_segments(id=tid)
-            if not analysis or not segments:
+            if not analysis:
                 continue
-            try:
-                outro, intro = matching.region_energies(analysis, segments)
-            except (KeyError, IndexError, TypeError):
-                continue                    # re-ingestion's problem, not this
+            energies = None
+            if tid in need_energy and segments:
+                try:
+                    energies = matching.region_energies(analysis, segments)
+                except (KeyError, IndexError, TypeError):
+                    energies = None         # re-ingestion's problem, not this
+            deck_wf = None
+            if tid in need_wf:
+                try:
+                    deck_wf = waveforms.envelope(
+                        analysis, config.DECK_WAVEFORM_POINTS)["points"]
+                except (KeyError, IndexError, TypeError, ValueError):
+                    deck_wf = None
+            if energies is None and deck_wf is None:
+                continue
             with self.database.writing() as q:
-                q.set_track_energies(id=tid, outro_energy=outro,
-                                     intro_energy=intro)
+                if energies is not None:
+                    q.set_track_energies(id=tid, outro_energy=energies[0],
+                                         intro_energy=energies[1])
+                if deck_wf is not None:
+                    q.set_track_deck_waveform(id=tid, deck_waveform=deck_wf)
             done += 1
         if pending:
             self._set(message=f"Ready (stored energies for {done} of "

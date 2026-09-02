@@ -120,7 +120,7 @@ def match(track_a, track_b, analysis_a, segments_a, analysis_b, segments_b,
     }
 
 
-def recommend(q, track_id, grids=None, limit=None):
+def recommend(q, track_id, grids=None, limit=None, rows=None):
     """Ranked candidates for `track_id` (P2-01..P2-05). ND (non-mixable)
     tracks are never candidates; candidates must share >=1 grid point and
     clear the score cutoff.
@@ -133,11 +133,16 @@ def recommend(q, track_id, grids=None, limit=None):
     sort, so the cap changes how many of the best candidates are returned and
     never which ones — scoring still considers the whole catalog.
     """
-    a = q.get_track(id=track_id)
+    # The summary carries every column scoring reads. get_track would carry the
+    # analysis and segment blobs too — a megabyte-scale read for a row whose
+    # tempo, key and stored energies are all that matter here.
+    a = q.get_track_summary(id=track_id)
     if not a or not a.mixable:
         return []
     if grids is None:
         grids = grid_bpms_by_track(q)
+    if rows is None:
+        rows = q.list_track_summaries()
     grid_a = grids.get(track_id, [])
     if limit is None:
         limit = config.RECOMMENDATION_LIMIT
@@ -145,7 +150,11 @@ def recommend(q, track_id, grids=None, limit=None):
     # A's outro is the only thing about A that scoring needs.
     outro_a = a.outro_energy
     if outro_a is None:
-        outro_a = region_energies(a.analysis_json, a.segments_json)[0]
+        an_a = q.get_track_analysis(id=track_id)
+        seg_a = q.get_track_segments(id=track_id)
+        if not an_a or not seg_a:
+            return []
+        outro_a = region_energies(an_a, seg_a)[0]
 
     # One pass over summaries, reading no blobs.
     #
@@ -161,7 +170,7 @@ def recommend(q, track_id, grids=None, limit=None):
     # already carries, and the BPM grid check rejects an incompatible candidate
     # before any of them is computed.
     out = []
-    for b in q.list_track_summaries():
+    for b in rows:
         if b.id == track_id or not b.mixable:
             continue                                            # P2-01
         grid_b = grids.get(b.id, [])

@@ -56,7 +56,16 @@ CREATE TABLE IF NOT EXISTS tracks (
     -- have not been re-ingested; matching treats NULL as "fall back to the
     -- blobs" rather than as an energy of zero.
     outro_energy  REAL,
-    intro_energy  REAL
+    intro_energy  REAL,
+    -- The deck-sized amplitude envelope, DECK_WAVEFORM_POINTS long.
+    --
+    -- Every deck row shows one, and the suggestion deck is drawn from tracks
+    -- chosen at request time, so the alternative to storing it is deriving it
+    -- per request from analysis_json — a megabyte read and a downsample per
+    -- row, twenty rows to a response. WaveformCache holds these too, but it is
+    -- an in-process dict: cold on every new serverless instance, which is
+    -- exactly when a first visitor is waiting.
+    deck_waveform JSONDOC
 );
 
 CREATE TABLE IF NOT EXISTS variants (

@@ -287,35 +287,88 @@ async function renderDeckZeroState() {
   }
 }
 
+//: One page of suggestions. The whole ranked list is rarely looked at, and
+//: every row returned costs a payload to build, so the deck asks for a page
+//: and extends it only as far as the user actually scrolls.
+const DECK_PAGE = 10;
+
+// Which track the visible deck belongs to, how far into its ranking we have
+// read, and whether the ranking ran out. Tracked so a scroll cannot append a
+// page belonging to a track the deck has since moved off.
+let deckPaging = { forTrackId: null, offset: 0, exhausted: true, loading: false };
+
 async function renderDeckRecommendations(forTrackId) {
   // Suggestions are an aid, never a precondition. Ranking a track against the
   // whole library is the most expensive read the API serves, and when it times
   // out the rejection used to travel all the way up into boot's catch, which
   // left the warmup overlay up for good. An empty deck is a far smaller loss
   // than an app that will not open.
-  let recs;
-  try {
-    recs = rankRecommendations(await api.recommendations(forTrackId));
-  } catch {
-    $("#deck-sub").textContent = "Suggestions are unavailable for this track.";
-    $("#deck").innerHTML = "";
-    return;
-  }
-  $("#deck-sub").textContent = recs.length
-    ? `Suggested next tracks for what\u2019s playing \u2014 ranked by match`
-    : "No compatible tracks share a BPM grid with this one.";
+  deckPaging = { forTrackId, offset: 0, exhausted: false, loading: false };
   const deck = $("#deck");
   deck.innerHTML = "";
   const list = document.createElement("ol");
   list.className = "deck-list";
+  deck.appendChild(list);
+
+  const first = await loadDeckPage(forTrackId, list);
+  if (first === null) {
+    $("#deck-sub").textContent = "Suggestions are unavailable for this track.";
+    deck.innerHTML = "";
+    return;
+  }
+  $("#deck-sub").textContent = first
+    ? `Suggested next tracks for what\u2019s playing \u2014 ranked by match`
+    : "No compatible tracks share a BPM grid with this one.";
+}
+
+/**
+ * Append the next page of suggestions.
+ *
+ * Returns how many rows were added, or null if the request failed. A short
+ * page means the ranking is spent, which is what stops the scroll handler from
+ * asking again forever.
+ */
+async function loadDeckPage(forTrackId, list) {
+  if (deckPaging.loading || deckPaging.exhausted) return 0;
+  deckPaging.loading = true;
+  let recs;
+  try {
+    recs = rankRecommendations(await api.recommendations(forTrackId, {
+      limit: DECK_PAGE, offset: deckPaging.offset,
+    }));
+  } catch {
+    deckPaging.loading = false;
+    deckPaging.exhausted = true;
+    return null;
+  }
+  // The deck may have moved to another track while this was in flight; its
+  // rows belong to a ranking that is no longer on screen.
+  if (deckPaging.forTrackId !== forTrackId) {
+    deckPaging.loading = false;
+    return 0;
+  }
   recs.forEach((rec) => {
-    // The API inlines the candidate's metadata and waveform, so ranking the
-    // deck needs no follow-up request either.
+    // The API inlines the candidate's metadata and waveform, so a deck row
+    // needs no follow-up request either.
     const meta = rememberMeta(rec.track) || trackMeta(rec.track_id);
     if (meta) list.appendChild(deckRow(meta, rec));
   });
-  deck.appendChild(list);
+  deckPaging.offset += recs.length;
+  deckPaging.exhausted = recs.length < DECK_PAGE;
+  deckPaging.loading = false;
+  return recs.length;
 }
+
+// Extend the deck as it is scrolled into view. Bound to the window because the
+// deck grows the page rather than scrolling inside its own box.
+window.addEventListener("scroll", () => {
+  if (deckPaging.exhausted || deckPaging.loading || !deckPaging.forTrackId) return;
+  const nearBottom =
+    window.innerHeight + window.scrollY >= document.body.offsetHeight - 400;
+  if (!nearBottom) return;
+  const list = $("#deck").querySelector(".deck-list");
+  if (list) loadDeckPage(deckPaging.forTrackId, list);
+}, { passive: true });
 
 function deckRow(meta, rec) {
   const li = document.createElement("li");

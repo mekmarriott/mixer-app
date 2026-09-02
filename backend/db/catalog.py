@@ -32,6 +32,23 @@ from .queries import Queries
 
 
 
+def _deck_waveform_or_none(analysis):
+    """The deck-row envelope for a track, or None when it cannot be derived.
+
+    Stored for the same reason as the energies: it is a small, fixed-size
+    reduction of a blob that would otherwise be read and downsampled per
+    request, on a platform where the in-process cache that used to hold it is
+    cold on every new instance.
+    """
+    if not analysis:
+        return None
+    from .. import config, waveforms          # lazy: avoids an import cycle
+    try:
+        return waveforms.envelope(analysis, config.DECK_WAVEFORM_POINTS)["points"]
+    except (KeyError, IndexError, TypeError, ValueError):
+        return None
+
+
 def _region_energies_or_none(analysis, segments):
     """`(outro, intro)` for a track, or None when they cannot be derived.
 
@@ -206,6 +223,9 @@ class Catalog:
             if energies:
                 q.set_track_energies(id=row["id"], outro_energy=energies[0],
                                      intro_energy=energies[1])
+            deck_wf = _deck_waveform_or_none(row.get("analysis"))
+            if deck_wf is not None:
+                q.set_track_deck_waveform(id=row["id"], deck_waveform=deck_wf)
             for grid_bpm, ratio, object_key, duration_s in variants:
                 q.upsert_variant(track_id=row["id"], grid_bpm=grid_bpm,
                                  ratio=ratio, object_key=object_key,
