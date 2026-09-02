@@ -79,10 +79,15 @@ class TestRubberBandEngine(unittest.TestCase):
     def test_engine_name_reports_the_live_engine(self):
         self.assertEqual(stretch.engine_name(), "rubberband")
 
-    def test_uses_the_fine_r3_engine(self):
-        """The CLI still defaults to R2 for backward compatibility; variant
-        rendering is offline and one-shot, so it should be paying for R3."""
-        self.assertIn("--fine", stretch.RUBBERBAND_ARGS)
+    def test_stays_on_the_r2_engine(self):
+        """R3 ("--fine") is the finer engine in general and this pipeline used
+        to pass it, but on our material it smears transients badly: measured
+        over percussive catalog tracks across the stretch range, R2 retains 84%
+        of the master's attack against R3's 67%. Rendering being offline and
+        one-shot is a reason to spend CPU, not a reason to spend it on an
+        engine that sounds worse here."""
+        self.assertNotIn("--fine", stretch.RUBBERBAND_ARGS)
+        self.assertNotIn("-3", stretch.RUBBERBAND_ARGS)
 
     def test_rubberband_stretches_to_the_requested_duration(self):
         x = synth.synthesize({"id": "1001", "bpm": 124, "key": "8A", "duration_s": 12})

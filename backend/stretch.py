@@ -6,8 +6,8 @@ is an STFT phase vocoder (scipy) — adequate as a bare-install stand-in.
 ratio = target_bpm / native_bpm; output duration = input / ratio.
 
 Variants are pre-rendered once at ingestion, never in the playback path, so
-this deliberately buys quality with CPU: the R3 engine (`-3`/`--fine`) rather
-than the CLI's backward-compatible R2 default.
+CPU is cheap here — but spending it on the R3 engine makes the audio worse,
+not better. See RUBBERBAND_ARGS.
 
 Set DJMIXER_REQUIRE_RUBBERBAND=1 to make a missing Rubber Band a hard error
 instead of a silent downgrade to the phase vocoder.
@@ -25,10 +25,21 @@ from .audio_io import load_wav, save_wav
 
 RUBBERBAND = shutil.which("rubberband")
 
-# R3 ("--fine") is materially better on percussive material than the R2 engine
-# the CLI still defaults to for backward compatibility. -q keeps the per-track
-# progress bar out of ingestion logs.
-RUBBERBAND_ARGS = ["--fine", "-q"]
+# Stay on the CLI's default R2 engine. R3 ("-3"/"--fine") has the better
+# general reputation and this pipeline used to pass it, but on our material it
+# measures materially WORSE: over 4 percussive catalog tracks at ratios across
+# the +/-10% stretch range, R2 retains 84% of the master's transient attack and
+# 82% of its RMS, while R3 retains 67% and 73%. R3 smears energy out of the
+# transients and into the gaps between them — the beat loses definition and the
+# noise floor rises, which is what "washy" sounds like. It is not a sample-rate
+# artefact: stretching at 44.1 kHz and resampling back down recovers none of it
+# (69.4% vs 69.9% attack retained).
+#
+# Max crispness ("-c 6") on R2 sharpens attacks slightly further (84.9%) but
+# costs 3 points of RMS, so it thins the sustain for no real transient gain.
+#
+# -q keeps the per-track progress bar out of ingestion logs.
+RUBBERBAND_ARGS = ["-q"]
 
 
 def require_rubberband():

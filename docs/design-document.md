@@ -26,7 +26,7 @@ default path:
 |---|---|---|---|
 | Jamendo API | `backend/jamendo.py fetch_track(entry, mode)` | live API v3.0, credentials from `.env` | `offline` mode: deterministic synthesized tracks |
 | Essentia | `backend/analysis.py` | `RhythmExtractor2013` (BPM/beats), `KeyExtractor` (edma), `Spectrum`/`RMS`/`Flux` (frames) | numpy/scipy DSP, same output contract |
-| Rubber Band | `backend/stretch.py` | `rubberband --fine` (R3 engine) CLI | STFT phase vocoder (scipy) |
+| Rubber Band | `backend/stretch.py` | `rubberband` CLI, default R2 engine | STFT phase vocoder (scipy) |
 
 Because a fallback is a *different engine* rather than a slower one, a silent
 downgrade in production would quietly change every detected BPM and key.
@@ -115,11 +115,26 @@ the contract first. Two differences are worth knowing:
 
 ## 4. Time-stretch
 
-Rubber Band's R3 engine (`--fine`) is the production path, invoked per
-variant at ingestion. The CLI still defaults to the older R2 engine for
-backward compatibility, so `--fine` is passed explicitly: variants are
-pre-rendered once and never touched in the playback path, which is exactly
-the case where buying quality with CPU is free.
+Rubber Band is the production path, invoked per variant at ingestion on the
+CLI's default R2 engine.
+
+This pipeline previously passed `--fine` to select R3, on the reasoning that
+variants are pre-rendered once and never touched in the playback path, so
+buying quality with CPU is free. The CPU is indeed free; R3 is not the
+quality. Measured on this catalog's material, R3 smears energy out of the
+transients and into the gaps between them — the beat loses definition and the
+noise floor rises. Over four percussive tracks at ratios spanning the ±10%
+stretch range, R2 retains 84% of the master's transient attack and 82% of its
+RMS, against R3's 67% and 73%.
+
+This is not a sample-rate artefact. Upsampling to 44.1 kHz, stretching with
+R3 and resampling back recovers none of it (69.4% attack retained, against
+69.9% at our native 22.05 kHz). Nor is it crispness: max crispness on R2
+(`-c 6`) sharpens attacks by a further 0.7 points while costing 3 points of
+RMS, thinning the sustain for no real transient gain.
+
+R3 has the better general reputation, so re-selecting it needs a measurement
+on this material rather than an appeal to that reputation.
 
 The fallback is a classic STFT phase vocoder (2048/512, Hann): magnitude
 interpolation at resampled frame positions, phase accumulated by per-bin

@@ -44,8 +44,13 @@ audio — see projections).
 Scaling from measured means. Production track = ~4 min (4x the 60s bench
 tracks); analysis/stretch cost scales ~linearly with duration. Measured on
 real Jamendo audio with the production engines: a 233s track costs ~1.4s to
-analyze with Essentia and ~0.9s per variant with Rubber Band's R3 engine, so
-the projections below (built from the bench means) are conservative.
+analyze with Essentia and ~0.9s per variant with Rubber Band, so the
+projections below (built from the bench means) are conservative.
+
+These variant figures were measured against Rubber Band's R3 engine, which
+was the production path at the time. Rendering has since moved to R2 (see
+design-document.md §4), which is the cheaper of the two, so the projections
+remain conservative rather than needing a re-run.
 
 | Catalog | Ingest compute (1 core) | Ingest (8 parallel workers) | Variant storage (compressed ~1MB/min) | Request ops |
 |---|---|---|---|---|
