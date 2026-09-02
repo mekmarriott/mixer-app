@@ -80,12 +80,52 @@ TRACKS_CONFIG = Path(os.environ.get("DJMIXER_TRACKS", ROOT / "config" / "tracks.
 #: fixture and the benchmark, so the default has to be computed on demand.
 DATABASE_URL = os.environ.get("DJMIXER_DATABASE_URL")
 
+#: Fallbacks for the database URL, in order, when DJMIXER_DATABASE_URL is unset.
+#:
+#: Vercel's Supabase integration injects its own names and does not know ours,
+#: so on a deployment the connection string is already present — under a name
+#: nothing reads. Requiring DJMIXER_DATABASE_URL as well means hand-copying a
+#: live credential into a second variable, which is both a chore and a way to
+#: end up with two values that disagree. Reading the injected name directly
+#: removes the duplicate.
+#:
+#: Pooled first: Supabase's transaction pooler (port 6543) is what a serverless
+#: function must use — see docs/infrastructure-plan.md §1.3. The non-pooling
+#: URL is a last resort, correct for a long-lived process and wrong for this one.
+DATABASE_URL_FALLBACK_VARS = (
+    "MIX_DB_POSTGRES_URL",              # Supabase integration, pooled
+    "MIX_DB_POSTGRES_PRISMA_URL",       # same host, pgbouncer flag
+    "MIX_DB_POSTGRES_URL_NON_POOLING",
+)
+
 
 def database_url():
-    """The database URL in force. See docs/database.md."""
+    """The database URL in force. See docs/database.md.
+
+    DJMIXER_DATABASE_URL wins. Failing that, a URL injected by the Supabase
+    integration is used, so a deployment needs no duplicated credential.
+    Failing that, the local SQLite file — which is right for development and
+    wrong for a read-only serverless filesystem, so the caller that cares
+    should check `is_local_sqlite()`.
+    """
     if DATABASE_URL:
         return DATABASE_URL
+    # Set but EMPTY is an explicit opt-out, not an absent value: run_tests.sh
+    # and the CI workflow pass `DJMIXER_DATABASE_URL=` precisely to force the
+    # local SQLite path. Falling through to an injected URL there would point
+    # the suite at the production database.
+    if DATABASE_URL == "":
+        return "sqlite:///" + str(DB_PATH)
+    for var in DATABASE_URL_FALLBACK_VARS:
+        url = (os.environ.get(var) or "").strip()
+        if url.startswith(("postgres://", "postgresql://")):
+            return url
     return "sqlite:///" + str(DB_PATH)
+
+
+def is_local_sqlite():
+    """True when the backend would fall back to the on-disk SQLite catalog."""
+    return database_url().startswith("sqlite:")
 
 SAMPLE_RATE = 22050                     # prototype rate (see design doc §Audio format)
 
