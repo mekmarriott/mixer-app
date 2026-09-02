@@ -104,13 +104,18 @@ def match(track_a, track_b, analysis_a, segments_a, analysis_b, segments_b,
     }
 
 
-def recommend(q, track_id, grids=None):
+def recommend(q, track_id, grids=None, limit=None):
     """Ranked candidates for `track_id` (P2-01..P2-05). ND (non-mixable)
     tracks are never candidates; candidates must share >=1 grid point and
     clear the score cutoff.
 
     `q` is a ``db.Queries`` scope. `grids` is the catalog-wide
     ``{track_id: [grid_bpm]}`` map; it is fetched in one query when not given.
+
+    `limit` truncates the ranked list (default ``config.RECOMMENDATION_LIMIT``);
+    pass 0 or a negative number for all of it. Truncation happens after the
+    sort, so the cap changes how many of the best candidates are returned and
+    never which ones — scoring still considers the whole catalog.
     """
     a = q.get_track(id=track_id)
     if not a or not a.mixable:
@@ -136,4 +141,6 @@ def recommend(q, track_id, grids=None):
         m["artist"] = b.artist
         out.append(m)
     out.sort(key=lambda m: m["score"], reverse=True)            # P2-05
-    return out
+    if limit is None:
+        limit = config.RECOMMENDATION_LIMIT
+    return out[:limit] if limit and limit > 0 else out

@@ -136,8 +136,17 @@ def create_app(run_ingestion=True, database=None, warmup_async=False):
         resp.status_code = code
         return resp
 
-    def track_payload(t, grids=None, wf_points=None):
-        """`t` is a db.Track or the blob-free db.ListTrackSummariesRow."""
+    def track_payload(t, grids=None, wf_points=None, analysis_loader=None):
+        """`t` is a db.Track or the blob-free db.ListTrackSummariesRow.
+
+        `analysis_loader` supplies the analysis for a waveform the warmup pass
+        did not precompute. Warmup only warms the deck now, so a row outside it
+        — every recommendation past the opening screen — would otherwise carry
+        `waveform: null`. The loader is passed in rather than opened here
+        because callers already hold a read scope, and taking a second
+        connection from inside one competes with the admission gate for a pool
+        that is only `connection_ceiling` deep.
+        """
         row = {
             "id": t.id, "name": t.name, "artist": t.artist, "genre": t.genre,
             "bpm": t.native_bpm, "camelot": t.camelot,
@@ -150,7 +159,11 @@ def create_app(run_ingestion=True, database=None, warmup_async=False):
             row["grid_bpms"] = grids.get(t.id, [])
         if wf_points:
             # Inline the thumbnail so a deck row costs zero extra requests.
-            wf = cache.get(t.id, wf_points)
+            if analysis_loader is None:
+                wf = cache.get(t.id, wf_points)
+            else:
+                wf = cache.get_or_compute(t.id, wf_points, None,
+                                          lambda: analysis_loader(t.id))
             row["waveform"] = wf["points"] if wf else None
         return row
 
@@ -394,8 +407,12 @@ def create_app(run_ingestion=True, database=None, warmup_async=False):
                 for r in recs:
                     t = q.get_track(id=r["track_id"])
                     if t:
+                        # get_track already carried the analysis blob back, so
+                        # the waveform for a candidate outside the warmed deck
+                        # costs no further query.
                         r["track"] = track_payload(
-                            t, wf_points=config.DECK_WAVEFORM_POINTS)
+                            t, wf_points=config.DECK_WAVEFORM_POINTS,
+                            analysis_loader=lambda _id, t=t: t.analysis_json)
         return jsonify(recs)
 
     @app.get("/api/transitions")

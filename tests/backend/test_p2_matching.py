@@ -105,6 +105,28 @@ class TestP2Matching(unittest.TestCase):
         m = matching.match(a, b_far, an_a, sg_a, an_b, sg_b, ga, gb)
         self.assertLess(m["breakdown"]["key"], 0.2)
 
+    # -------------------------------------------------------- result cap
+    def test_recommendations_are_capped_and_keep_the_best(self):
+        """The cap truncates after the sort, so it drops the weakest
+        candidates and never changes which ones rank highest. Each result
+        carries a waveform out and a multi-megabyte audition behind it, so the
+        tail of a long list is paid for and never looked at."""
+        with read() as q:
+            everything = matching.recommend(q, "1001", limit=0)
+            capped = matching.recommend(q, "1001", limit=2)
+            default = matching.recommend(q, "1001")
+        self.assertLessEqual(len(capped), 2)
+        self.assertEqual([r["track_id"] for r in capped],
+                         [r["track_id"] for r in everything[:2]])
+        self.assertLessEqual(len(default), config.RECOMMENDATION_LIMIT)
+
+    def test_a_cap_of_zero_means_no_limit(self):
+        """0 is 'all of them', not 'none' — the escape hatch for callers that
+        want the whole ranking, such as the cap's own test."""
+        with read() as q:
+            self.assertEqual(len(matching.recommend(q, "1001", limit=0)),
+                             len(matching.recommend(q, "1001", limit=10_000)))
+
     # ------------------------------------------------------------- P2-05
     def test_p2_05_sorted_descending(self):
         with read() as q:

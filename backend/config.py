@@ -144,7 +144,7 @@ DB_ACQUIRE_TIMEOUT_S = 5.0
 # ---- Zero-state deck ----------------------------------------------------
 # Before any track is chosen there is nothing to match against, so the opening
 # view is a browse surface: a few tracks per genre, no pair analysis.
-DECK_TRACKS_PER_GENRE = 5
+DECK_TRACKS_PER_GENRE = 10
 DECK_WAVEFORM_POINTS = 120              # deck row thumbnails
 TIMELINE_WAVEFORM_POINTS = 480          # track window
 FRAME_SIZE = 2048
@@ -222,6 +222,12 @@ WEIGHT_BPM = 0.45
 WEIGHT_KEY = 0.35
 WEIGHT_ENERGY = 0.20
 MATCH_SCORE_CUTOFF = 0.40               # below this a candidate is not recommended
+
+# How many ranked candidates a recommendation request returns. Every one costs
+# a waveform on the way out and a ~10 MB audio download the moment it is
+# auditioned, so the tail of a long ranked list is paid for and never looked
+# at. Twenty is well past what fits on screen.
+RECOMMENDATION_LIMIT = 20
 
 # Transition detection (Phase 3)
 WINDOW_BARS = 8                          # transition window length in bars

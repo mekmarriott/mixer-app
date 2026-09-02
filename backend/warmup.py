@@ -131,39 +131,58 @@ class Warmup:
                               f"(see /api/ingest); serving the rest")
 
     # ------------------------------------------------------------- phase 2
+    @staticmethod
+    def _row(t):
+        """A deck row from a summary. Costs no analysis read — the summary is
+        the blob-free projection, which is what makes selecting the deck cheap
+        enough to do before any waveform work."""
+        return {
+            "id": t.id, "name": t.name, "artist": t.artist, "genre": t.genre,
+            "bpm": t.native_bpm, "camelot": t.camelot,
+            "duration_s": t.duration_s, "mixable": t.mixable,
+            "license_flags": {"nd": t.license_nd, "sa": t.license_sa,
+                              "nc": t.license_nc},
+            "attribution": licensing.attribution(t),
+            "status": t.status,
+            # Nothing stores popularity yet; deck.py orders by it when it
+            # appears and falls back to a deterministic shuffle until then.
+            "popularity": getattr(t, "popularity", None),
+        }
+
     def _precompute(self):
+        """Select the deck, then warm only the waveforms it shows.
+
+        This used to read `analysis_json` for every ready track and warm both
+        native envelopes before reporting ready. Those blobs are megabytes
+        each, so the cost scaled with the catalog and was paid in full on every
+        cold start — 16 seconds for 72 tracks on Vercel, against a 30 second
+        function limit, before the first request could be answered.
+
+        Almost none of it was used. The deck shows at most
+        DECK_TRACKS_PER_GENRE per genre and omits anything unmixable, and every
+        other envelope the UI asks for already has a lazy path through
+        WaveformCache.get_or_compute. So the deck is chosen from the blob-free
+        summaries first, and only those rows are warmed; the rest of the
+        catalog is computed on first request and cached from then on.
+        """
         with self.database.reading() as q:
             summaries = [t for t in q.list_track_summaries()
                          if t.status == db_status.READY]
 
-        self._set(phase=PRECOMPUTING, total=len(summaries), done=0,
-                  message=f"Precomputing waveforms for {len(summaries)} tracks")
+        self._set(message="Building deck")
+        groups = deck.genre_groups([self._row(t) for t in summaries])
+        wanted = [row for g in groups for row in g["tracks"]]
 
-        rows = []
-        for i, t in enumerate(summaries, 1):
+        self._set(phase=PRECOMPUTING, total=len(wanted), done=0,
+                  message=f"Precomputing waveforms for {len(wanted)} deck tracks")
+        for i, row in enumerate(wanted, 1):
             with self.database.reading() as q:
-                analysis = q.get_track_analysis(id=t.id)
+                analysis = q.get_track_analysis(id=row["id"])
             if analysis:
-                self.cache.warm_native(t.id, analysis)
-            rows.append({
-                "id": t.id, "name": t.name, "artist": t.artist, "genre": t.genre,
-                "bpm": t.native_bpm, "camelot": t.camelot,
-                "duration_s": t.duration_s, "mixable": t.mixable,
-                "license_flags": {"nd": t.license_nd, "sa": t.license_sa,
-                                  "nc": t.license_nc},
-                "attribution": licensing.attribution(t),
-                "status": t.status,
-                # Nothing stores popularity yet; deck.py orders by it when it
-                # appears and falls back to a deterministic shuffle until then.
-                "popularity": getattr(t, "popularity", None),
-            })
+                self.cache.warm_native(row["id"], analysis)
+            # Inline the thumbnail so the opening deck is a pure snapshot read.
+            wf = self.cache.get(row["id"], config.DECK_WAVEFORM_POINTS)
+            row["waveform"] = wf["points"] if wf else None
             self._set(done=i)
 
-        self._set(message="Building deck")
-        groups = deck.genre_groups(rows)
-        # Inline the thumbnails so the opening deck is a pure snapshot read.
-        for g in groups:
-            for row in g["tracks"]:
-                wf = self.cache.get(row["id"], config.DECK_WAVEFORM_POINTS)
-                row["waveform"] = wf["points"] if wf else None
         self.deck = groups
