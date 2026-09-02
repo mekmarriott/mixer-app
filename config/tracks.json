@@ -1,96 +1,727 @@
 {
-  "mode": "offline",
-  "comment": "mode: 'jamendo' pulls real tracks by ID via the Jamendo API (requires network + JAMENDO_CLIENT_ID env var). mode: 'offline' deterministically synthesizes audio per entry so the full pipeline runs without network. License mix deliberately includes ND/SA/NC to exercise compliance gates (tests P1-07..P1-10).",
+  "mode": "jamendo",
+  "source_playlist": "https://www.jamendo.com/playlist/500608490/fresh-and-new",
+  "comment": "Tracks from the Jamendo 'Fresh & New' playlist. mode 'jamendo' pulls them by ID from the Jamendo API (needs network + a client id in JAMENDO_CLIENT_ID / JAMENDO_API_CLIENT, read from .env). In that mode name/artist/license come from the API and bpm/key are detected by Essentia; the values below are the measured results recorded at curation time, and are what mode 'offline' uses to synthesize a stand-in catalog. 'genre' is the tempo band from backend/config.py BPM_BUCKETS, assigned from the detected BPM. NOTE: most of this playlist is ND-licensed, so most tracks are playback-only and are excluded from mixing (see README).",
   "tracks": [
     {
-      "id": "1001",
-      "name": "Neon Corridor",
-      "artist": "Volt Array",
-      "genre": "house",
-      "bpm": 124,
-      "key": "8A",
-      "license": "CC BY 4.0",
-      "duration_s": 60
-    },
-    {
-      "id": "1002",
-      "name": "Glass Elevator",
-      "artist": "Mira Flux",
-      "genre": "house",
-      "bpm": 126,
-      "key": "7A",
-      "license": "CC BY-SA 4.0",
-      "duration_s": 60
-    },
-    {
-      "id": "1003",
-      "name": "Midnight Grid",
-      "artist": "Kestrel Motive",
-      "genre": "house",
-      "bpm": 122,
+      "id": "1850249",
+      "name": "M\u00e1s All\u00e1",
+      "artist": "Vince Miranda",
+      "genre": "slow",
+      "bpm": 81,
       "key": "8B",
-      "license": "CC BY-NC 4.0",
-      "duration_s": 60
+      "license": "CC BY-NC-ND 3.0",
+      "duration_s": 243.6
     },
     {
-      "id": "1004",
-      "name": "Sodium Bloom",
-      "artist": "Volt Array",
-      "genre": "house",
-      "bpm": 128,
-      "key": "5A",
-      "license": "CC BY 4.0",
-      "duration_s": 60
+      "id": "1879649",
+      "name": "Un Ratito Nama (Prod: Duran The Coach)",
+      "artist": "Lessky",
+      "genre": "downtempo",
+      "bpm": 88,
+      "key": "1A",
+      "license": "CC BY-NC-ND 3.0",
+      "duration_s": 180.3
     },
     {
-      "id": "1005",
-      "name": "Locked Groove",
-      "artist": "Pale Circuit",
-      "genre": "house",
-      "bpm": 124,
-      "key": "8A",
-      "license": "CC BY-ND 4.0",
-      "duration_s": 60
+      "id": "1945368",
+      "name": "Nothing,With You",
+      "artist": "Smoking With Poets",
+      "genre": "downtempo",
+      "bpm": 88,
+      "key": "3A",
+      "license": "CC BY-NC-ND 3.0",
+      "duration_s": 213.4
     },
     {
-      "id": "2001",
-      "name": "Slow Ferry",
-      "artist": "Harbor Lights",
+      "id": "2232438",
+      "name": "My Heart Is Your Home",
+      "artist": "Sarah C",
+      "genre": "downtempo",
+      "bpm": 88,
+      "key": "8B",
+      "license": "CC BY 3.0",
+      "duration_s": 202.6
+    },
+    {
+      "id": "1929475",
+      "name": "Easy to love you",
+      "artist": "Boulvard X-Audi",
       "genre": "downtempo",
       "bpm": 90,
-      "key": "4A",
-      "license": "CC BY 4.0",
-      "duration_s": 60
+      "key": "6A",
+      "license": "CC BY-NC-ND 3.0",
+      "duration_s": 159.9
     },
     {
-      "id": "2002",
-      "name": "Paper Lanterns",
-      "artist": "Osei Dunn",
+      "id": "1868922",
+      "name": "Dame M\u00e1s (acoustic)",
+      "artist": "Alfonso Lugo",
+      "genre": "downtempo",
+      "bpm": 91,
+      "key": "1B",
+      "license": "CC BY-NC-ND 3.0",
+      "duration_s": 245.3
+    },
+    {
+      "id": "1977273",
+      "name": "In the Summer",
+      "artist": "Maiya",
       "genre": "downtempo",
       "bpm": 92,
+      "key": "6B",
+      "license": "CC BY-NC-ND 3.0",
+      "duration_s": 198.8
+    },
+    {
+      "id": "1975586",
+      "name": "Live It Up",
+      "artist": "The.madpix.project",
+      "genre": "downtempo",
+      "bpm": 92,
+      "key": "10A",
+      "license": "CC BY-NC-ND 3.0",
+      "duration_s": 192.4
+    },
+    {
+      "id": "1834866",
+      "name": "Golden",
+      "artist": "Neon NiteClub",
+      "genre": "midtempo",
+      "bpm": 96,
+      "key": "8A",
+      "license": "CC BY-NC-ND 3.0",
+      "duration_s": 207.7
+    },
+    {
+      "id": "1826504",
+      "name": "Greedy - Kyrie Braxton",
+      "artist": "Kyrie Braxton",
+      "genre": "midtempo",
+      "bpm": 99,
+      "key": "2A",
+      "license": "CC BY-NC-ND 3.0",
+      "duration_s": 189.2
+    },
+    {
+      "id": "2214037",
+      "name": "Where's the Love",
+      "artist": "Samie Bower",
+      "genre": "midtempo",
+      "bpm": 99,
+      "key": "6A",
+      "license": "CC BY-NC-ND 3.0",
+      "duration_s": 189.6
+    },
+    {
+      "id": "1834483",
+      "name": "Erick Fill &amp; Alwaro - You'll Be Fine ft. Crushboys (Original Mix)",
+      "artist": "erickfill",
+      "genre": "midtempo",
+      "bpm": 100,
+      "key": "8A",
+      "license": "CC BY-NC-ND 3.0",
+      "duration_s": 208.8
+    },
+    {
+      "id": "1800901",
+      "name": "Adi Rambo - Acelera",
+      "artist": "Adi Rambo",
+      "genre": "midtempo",
+      "bpm": 100,
+      "key": "8B",
+      "license": "CC BY-NC-ND 3.0",
+      "duration_s": 174.3
+    },
+    {
+      "id": "1882912",
+      "name": "Bebe go",
+      "artist": "P Steve Officiel",
+      "genre": "midtempo",
+      "bpm": 100,
+      "key": "3B",
+      "license": "CC BY-NC-ND 3.0",
+      "duration_s": 177.3
+    },
+    {
+      "id": "2162424",
+      "name": "XENEZE - Starlight",
+      "artist": "XENEZE",
+      "genre": "midtempo",
+      "bpm": 100,
+      "key": "4B",
+      "license": "CC BY-NC-ND 3.0",
+      "duration_s": 158.4
+    },
+    {
+      "id": "2235600",
+      "name": "Tentadora",
+      "artist": "DANOIS",
+      "genre": "midtempo",
+      "bpm": 100,
+      "key": "9B",
+      "license": "CC BY-NC-ND 3.0",
+      "duration_s": 198.7
+    },
+    {
+      "id": "1858689",
+      "name": "Gimme Love Feat Eric Maseko",
+      "artist": "D JAY KOI",
+      "genre": "midtempo",
+      "bpm": 102,
       "key": "5A",
-      "license": "CC BY-NC-SA 4.0",
-      "duration_s": 60
+      "license": "CC BY-NC-ND 3.0",
+      "duration_s": 172.0
     },
     {
-      "id": "2003",
-      "name": "Low Orbit",
-      "artist": "Harbor Lights",
-      "genre": "downtempo",
-      "bpm": 89,
+      "id": "1881164",
+      "name": "Una Noche",
+      "artist": "MAKKENZIE",
+      "genre": "midtempo",
+      "bpm": 102,
+      "key": "3B",
+      "license": "CC BY-NC-ND 3.0",
+      "duration_s": 188.2
+    },
+    {
+      "id": "1980009",
+      "name": "Lady (feat Kid Randie &amp; Myster Sandman)",
+      "artist": "Le_J_James",
+      "genre": "midtempo",
+      "bpm": 105,
+      "key": "9A",
+      "license": "CC BY-NC-ND 3.0",
+      "duration_s": 200.6
+    },
+    {
+      "id": "1857622",
+      "name": "Fell In Love With Summer",
+      "artist": "Songwriterz",
+      "genre": "midtempo",
+      "bpm": 107,
+      "key": "4B",
+      "license": "CC BY-ND 3.0",
+      "duration_s": 221.0
+    },
+    {
+      "id": "2029626",
+      "name": "Reason to Stay (feat. undy)",
+      "artist": "lilac frog",
+      "genre": "midtempo",
+      "bpm": 107,
+      "key": "10B",
+      "license": "CC BY-NC-ND 3.0",
+      "duration_s": 196.5
+    },
+    {
+      "id": "1981752",
+      "name": "Quatro Paredes",
+      "artist": "heiwr",
+      "genre": "midtempo",
+      "bpm": 108,
       "key": "3A",
-      "license": "CC BY 4.0",
-      "duration_s": 60
+      "license": "CC BY-NC-ND 3.0",
+      "duration_s": 152.2
     },
     {
-      "id": "2004",
-      "name": "Quiet Machinery",
-      "artist": "Tin Palace",
-      "genre": "downtempo",
-      "bpm": 94,
+      "id": "1904435",
+      "name": "Reflections (feat. Mathias Hagen)",
+      "artist": "Kevin S.",
+      "genre": "midtempo",
+      "bpm": 110,
+      "key": "10A",
+      "license": "CC BY-NC-ND 3.0",
+      "duration_s": 258.1
+    },
+    {
+      "id": "1910735",
+      "name": "Chasing Tomorrow (feat. Jade Gritty)",
+      "artist": "Tab",
+      "genre": "midtempo",
+      "bpm": 110,
       "key": "11A",
-      "license": "CC BY-NC-ND 4.0",
-      "duration_s": 60
+      "license": "CC BY-NC-ND 3.0",
+      "duration_s": 186.9
+    },
+    {
+      "id": "2285379",
+      "name": "Echoes",
+      "artist": "Square a Saw",
+      "genre": "midtempo",
+      "bpm": 110,
+      "key": "4A",
+      "license": "CC BY-NC-ND 3.0",
+      "duration_s": 196.4
+    },
+    {
+      "id": "2221139",
+      "name": "Lose My Rose",
+      "artist": "Ed Napoli",
+      "genre": "midtempo",
+      "bpm": 113,
+      "key": "1A",
+      "license": "CC BY-NC-ND 3.0",
+      "duration_s": 199.5
+    },
+    {
+      "id": "1974740",
+      "name": "One Day We'll Be A Song",
+      "artist": "Explosive Ear Candy",
+      "genre": "midtempo",
+      "bpm": 114,
+      "key": "5B",
+      "license": "CC BY-NC-ND 3.0",
+      "duration_s": 255.3
+    },
+    {
+      "id": "1912687",
+      "name": "Broken Love",
+      "artist": "Yigit Atilla",
+      "genre": "midtempo",
+      "bpm": 115,
+      "key": "1B",
+      "license": "CC BY-NC-ND 3.0",
+      "duration_s": 179.0
+    },
+    {
+      "id": "1860165",
+      "name": "Athens",
+      "artist": "Pierce Murphy",
+      "genre": "midtempo",
+      "bpm": 118,
+      "key": "12A",
+      "license": "CC BY 3.0",
+      "duration_s": 249.5
+    },
+    {
+      "id": "1891977",
+      "name": "My Love",
+      "artist": "MODUS",
+      "genre": "midtempo",
+      "bpm": 119,
+      "key": "9A",
+      "license": "CC BY 3.0",
+      "duration_s": 233.8
+    },
+    {
+      "id": "1958457",
+      "name": "Boogie feat. Tracie Frank",
+      "artist": "The Disco Viking",
+      "genre": "midtempo",
+      "bpm": 119,
+      "key": "8A",
+      "license": "CC BY-NC-ND 3.0",
+      "duration_s": 251.0
+    },
+    {
+      "id": "2224073",
+      "name": "Ooh",
+      "artist": "THE SAME PERSONS",
+      "genre": "midtempo",
+      "bpm": 119,
+      "key": "10B",
+      "license": "CC BY-NC-ND 3.0",
+      "duration_s": 120.4
+    },
+    {
+      "id": "1846022",
+      "name": "Sax Is My Cardio",
+      "artist": "Kuzinmuzin",
+      "genre": "house",
+      "bpm": 120,
+      "key": "8A",
+      "license": "CC BY-NC-ND 3.0",
+      "duration_s": 207.3
+    },
+    {
+      "id": "2181597",
+      "name": "Be Without U",
+      "artist": "Neon NiteClub",
+      "genre": "house",
+      "bpm": 120,
+      "key": "9B",
+      "license": "CC BY-NC-ND 3.0",
+      "duration_s": 244.0
+    },
+    {
+      "id": "2237636",
+      "name": "Real to Me",
+      "artist": "Laurence DaNova",
+      "genre": "house",
+      "bpm": 120,
+      "key": "3A",
+      "license": "CC BY-NC-ND 3.0",
+      "duration_s": 213.0
+    },
+    {
+      "id": "1833213",
+      "name": "Veronika Kosh - River  in the sky (Original)",
+      "artist": "Veronica",
+      "genre": "house",
+      "bpm": 122,
+      "key": "5A",
+      "license": "CC BY-NC-ND 3.0",
+      "duration_s": 224.3
+    },
+    {
+      "id": "1968662",
+      "name": "JekK  - Keep me Alive (After Lofi)",
+      "artist": "JekK",
+      "genre": "house",
+      "bpm": 123,
+      "key": "6A",
+      "license": "CC BY-NC-ND 3.0",
+      "duration_s": 164.4
+    },
+    {
+      "id": "1820747",
+      "name": "Dan Darnell - Right Now",
+      "artist": "Dan Darnell",
+      "genre": "house",
+      "bpm": 124,
+      "key": "3A",
+      "license": "CC BY-NC-ND 3.0",
+      "duration_s": 151.7
+    },
+    {
+      "id": "1882706",
+      "name": "Julius Marx - Vices",
+      "artist": "Julius Marx",
+      "genre": "house",
+      "bpm": 124,
+      "key": "7B",
+      "license": "CC BY-NC-ND 3.0",
+      "duration_s": 196.3
+    },
+    {
+      "id": "2006249",
+      "name": "Runaway Mustang",
+      "artist": "The Devil Music Co.",
+      "genre": "house",
+      "bpm": 124,
+      "key": "5B",
+      "license": "CC BY-NC-ND 3.0",
+      "duration_s": 199.9
+    },
+    {
+      "id": "2176441",
+      "name": "Welcome to hell",
+      "artist": "KERRY",
+      "genre": "house",
+      "bpm": 124,
+      "key": "12A",
+      "license": "CC BY-NC-ND 3.0",
+      "duration_s": 179.0
+    },
+    {
+      "id": "2266835",
+      "name": "Pop &amp; Deep House",
+      "artist": "TNDR Productions",
+      "genre": "house",
+      "bpm": 124,
+      "key": "3A",
+      "license": "CC BY-NC-ND 3.0",
+      "duration_s": 275.4
+    },
+    {
+      "id": "1859499",
+      "name": "Alone - Nehilo",
+      "artist": "Nehilo",
+      "genre": "house",
+      "bpm": 126,
+      "key": "3B",
+      "license": "CC BY-NC-ND 3.0",
+      "duration_s": 167.6
+    },
+    {
+      "id": "2000103",
+      "name": "Burn Together",
+      "artist": "Pokki DJ",
+      "genre": "house",
+      "bpm": 126,
+      "key": "8B",
+      "license": "CC BY-ND 3.0",
+      "duration_s": 156.7
+    },
+    {
+      "id": "2028500",
+      "name": "BASXHKZIR - I Need You Love",
+      "artist": "BASXHKZIR",
+      "genre": "house",
+      "bpm": 126,
+      "key": "5A",
+      "license": "CC BY-NC-ND 3.0",
+      "duration_s": 129.5
+    },
+    {
+      "id": "1901140",
+      "name": "Under Water",
+      "artist": "The.madpix.project",
+      "genre": "house",
+      "bpm": 128,
+      "key": "1A",
+      "license": "CC BY-NC-ND 3.0",
+      "duration_s": 218.9
+    },
+    {
+      "id": "1886257",
+      "name": "Alone",
+      "artist": "Color Out",
+      "genre": "uptempo",
+      "bpm": 129,
+      "key": "12B",
+      "license": "CC BY-NC-ND 3.0",
+      "duration_s": 245.5
+    },
+    {
+      "id": "1885367",
+      "name": "the plan - stoneface priest",
+      "artist": "stonefacepriest",
+      "genre": "uptempo",
+      "bpm": 130,
+      "key": "2B",
+      "license": "CC BY-NC-ND 3.0",
+      "duration_s": 240.0
+    },
+    {
+      "id": "1861886",
+      "name": "Erase",
+      "artist": "Maury111",
+      "genre": "uptempo",
+      "bpm": 130,
+      "key": "2A",
+      "license": "CC BY-NC-ND 3.0",
+      "duration_s": 249.2
+    },
+    {
+      "id": "1911306",
+      "name": "Good Morning",
+      "artist": "EKOUT",
+      "genre": "uptempo",
+      "bpm": 130,
+      "key": "8A",
+      "license": "CC BY-NC-ND 3.0",
+      "duration_s": 251.1
+    },
+    {
+      "id": "2203626",
+      "name": "Alive",
+      "artist": "Songwriterz",
+      "genre": "uptempo",
+      "bpm": 130,
+      "key": "2B",
+      "license": "CC BY-ND 3.0",
+      "duration_s": 234.4
+    },
+    {
+      "id": "1847700",
+      "name": "OZELLA-DREAMS",
+      "artist": "OZELLA",
+      "genre": "uptempo",
+      "bpm": 132,
+      "key": "8B",
+      "license": "CC BY-NC-ND 3.0",
+      "duration_s": 179.5
+    },
+    {
+      "id": "1823855",
+      "name": "Losing Ground",
+      "artist": "Luke Davids",
+      "genre": "uptempo",
+      "bpm": 132,
+      "key": "6B",
+      "license": "CC BY-NC-ND 3.0",
+      "duration_s": 178.4
+    },
+    {
+      "id": "1876747",
+      "name": "YO QUIERO BEBER - Pueto pa lo mio records Presenta - Marshall Aquicci ft AllGenius - (Musica urbana, latin, latin urban, bass)",
+      "artist": "PUETO PA LO MIO RECORDS",
+      "genre": "uptempo",
+      "bpm": 132,
+      "key": "7B",
+      "license": "CC BY-NC-ND 3.0",
+      "duration_s": 192.0
+    },
+    {
+      "id": "1933339",
+      "name": "The River",
+      "artist": "Stingray SZN",
+      "genre": "uptempo",
+      "bpm": 135,
+      "key": "8B",
+      "license": "CC BY-NC-ND 3.0",
+      "duration_s": 289.8
+    },
+    {
+      "id": "1943451",
+      "name": "Nick Ray - Divide and Conquer (Electronic Remix)",
+      "artist": "Nick Ray",
+      "genre": "uptempo",
+      "bpm": 137,
+      "key": "3B",
+      "license": "CC BY-NC-ND 3.0",
+      "duration_s": 213.9
+    },
+    {
+      "id": "2040935",
+      "name": "Like I Do",
+      "artist": "I. D. F. X.",
+      "genre": "uptempo",
+      "bpm": 137,
+      "key": "8B",
+      "license": "CC BY-NC-ND 3.0",
+      "duration_s": 191.3
+    },
+    {
+      "id": "1925220",
+      "name": "On Repeat",
+      "artist": "Seth Power",
+      "genre": "uptempo",
+      "bpm": 140,
+      "key": "5A",
+      "license": "CC BY-NC-ND 3.0",
+      "duration_s": 194.6
+    },
+    {
+      "id": "1920679",
+      "name": "Silence",
+      "artist": "Arom",
+      "genre": "uptempo",
+      "bpm": 140,
+      "key": "9B",
+      "license": "CC BY-NC-ND 3.0",
+      "duration_s": 281.8
+    },
+    {
+      "id": "2180016",
+      "name": "Love You Anymore (feat. Seven)",
+      "artist": "Tom Orlando",
+      "genre": "uptempo",
+      "bpm": 140,
+      "key": "10A",
+      "license": "CC BY-SA 3.0",
+      "duration_s": 157.0
+    },
+    {
+      "id": "1921815",
+      "name": "antisocial",
+      "artist": "Rxbyn",
+      "genre": "uptempo",
+      "bpm": 145,
+      "key": "5A",
+      "license": "CC BY-NC-ND 3.0",
+      "duration_s": 178.8
+    },
+    {
+      "id": "2250638",
+      "name": "Pass me by (feat. Konnie)",
+      "artist": "zero-project",
+      "genre": "uptempo",
+      "bpm": 145,
+      "key": "11A",
+      "license": "CC BY 3.0",
+      "duration_s": 204.7
+    },
+    {
+      "id": "1826189",
+      "name": "Not the One to Say (I Told You So) (24-bit Master)",
+      "artist": "Cole Powell",
+      "genre": "uptempo",
+      "bpm": 146,
+      "key": "3B",
+      "license": "CC BY-NC-ND 3.0",
+      "duration_s": 235.8
+    },
+    {
+      "id": "1892110",
+      "name": "Dile Cuanto la Quiero",
+      "artist": "Igmar",
+      "genre": "uptempo",
+      "bpm": 150,
+      "key": "6A",
+      "license": "CC BY 3.0",
+      "duration_s": 174.9
+    },
+    {
+      "id": "1893036",
+      "name": "White Lilac",
+      "artist": "Novye Valtorny",
+      "genre": "uptempo",
+      "bpm": 150,
+      "key": "6A",
+      "license": "CC BY-NC-ND 3.0",
+      "duration_s": 192.2
+    },
+    {
+      "id": "2205234",
+      "name": "Igor Pumphonia - Echoes of Love",
+      "artist": "Igor Pumphonia",
+      "genre": "uptempo",
+      "bpm": 150,
+      "key": "5A",
+      "license": "CC BY-NC-ND 3.0",
+      "duration_s": 198.6
+    },
+    {
+      "id": "2220183",
+      "name": "LOW",
+      "artist": "Egor Budennyy",
+      "genre": "uptempo",
+      "bpm": 151,
+      "key": "5A",
+      "license": "CC BY-NC-ND 3.0",
+      "duration_s": 185.6
+    },
+    {
+      "id": "2037486",
+      "name": "M\u00eame",
+      "artist": "Paul &amp; Manuel",
+      "genre": "fast",
+      "bpm": 155,
+      "key": "6A",
+      "license": "CC BY-SA 3.0",
+      "duration_s": 213.7
+    },
+    {
+      "id": "1876086",
+      "name": "Love of My Life",
+      "artist": "Ben Lvcas",
+      "genre": "fast",
+      "bpm": 162,
+      "key": "11A",
+      "license": "CC BY-NC-ND 3.0",
+      "duration_s": 162.0
+    },
+    {
+      "id": "1840623",
+      "name": "My Heart Blows Up (Explosions)",
+      "artist": "Anton Leuba",
+      "genre": "fast",
+      "bpm": 164,
+      "key": "6A",
+      "license": "CC BY-NC 3.0",
+      "duration_s": 219.1
+    },
+    {
+      "id": "1986168",
+      "name": "Megan Graney - So It Goes",
+      "artist": "Megan Graney",
+      "genre": "fast",
+      "bpm": 164,
+      "key": "6B",
+      "license": "CC BY-NC-ND 3.0",
+      "duration_s": 276.6
+    },
+    {
+      "id": "2264297",
+      "name": "Beat",
+      "artist": "Bessonn&amp;sa",
+      "genre": "fast",
+      "bpm": 172,
+      "key": "11A",
+      "license": "CC BY-NC-ND 3.0",
+      "duration_s": 156.7
     }
   ]
 }
