@@ -178,9 +178,29 @@ class VercelBlobStore(BlobStore):
     #: signed URLs, which url_for() does not implement.
     DEFAULT_ACCESS = "public"
 
+    #: A store's public delivery host is its id without the `store_` prefix,
+    #: lowercased. Vercel's Blob integration injects BLOB_STORE_ID but not the
+    #: URL, so deriving it means a deployment does not need BLOB_BASE_URL set
+    #: by hand — and cannot end up pointing at a different store than the token
+    #: writes to, which is exactly the failure that produces objects that
+    #: upload fine and 404 on every read.
+    STORE_HOST_SUFFIX = ".public.blob.vercel-storage.com"
+
+    @classmethod
+    def base_url_from_store_id(cls, store_id):
+        store_id = (store_id or "").strip()
+        if not store_id.startswith("store_"):
+            return ""
+        return f"https://{store_id.removeprefix('store_').lower()}{cls.STORE_HOST_SUFFIX}"
+
     def __init__(self, token=None, base_url=None, cli="vercel", access=None):
         self.token = token or os.environ.get("BLOB_READ_WRITE_TOKEN")
-        self.base_url = (base_url or os.environ.get("BLOB_BASE_URL") or "").rstrip("/")
+        self.base_url = (
+            base_url
+            or os.environ.get("BLOB_BASE_URL")
+            or self.base_url_from_store_id(os.environ.get("BLOB_STORE_ID"))
+            or ""
+        ).rstrip("/")
         self.access = access or os.environ.get("BLOB_ACCESS") or self.DEFAULT_ACCESS
         if self.access not in ("public", "private"):
             raise BlobStoreError(

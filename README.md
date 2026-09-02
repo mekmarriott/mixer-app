@@ -68,7 +68,7 @@ tracks — works with zero network, which is how this repo was developed and
 tested). To ingest real Jamendo audio:
 
 1. Get a (free) Jamendo API client id.
-2. `export JAMENDO_CLIENT_ID=your_id`
+2. `export JAMENDO_API_CLIENT=your_id`
 3. In `config/tracks.json`: set `"mode": "jamendo"` and put real Jamendo
    track ids in the `id` fields (keep a `genre` matching a bucket in
    `backend/config.py`; `bpm`/`key` fields are ignored in this mode — they

@@ -7,6 +7,7 @@ network and no cloud credentials — which is the point. The deployed
 configuration differs from this one by two environment variables, so anything
 these tests cannot reach is deliberately kept trivial.
 """
+import os
 import time
 import unittest
 from unittest import mock
@@ -64,6 +65,81 @@ class TestBlobStore(unittest.TestCase):
             self.assertIsNotNone(key, tid)
             self.assertTrue(self.store.exists(key),
                             f"{tid} master missing at {key}")
+
+
+class TestIntegrationInjectedConfig(unittest.TestCase):
+    """A deployment must work from the variables the Vercel integrations
+    inject, without a human copying credentials into a second name.
+
+    Supabase injects MIX_DB_POSTGRES_URL; Blob injects BLOB_STORE_ID. Neither
+    knows this app's names. Requiring DJMIXER_DATABASE_URL and BLOB_BASE_URL
+    on top meant the deployed function silently fell back to on-disk SQLite on
+    a read-only filesystem, and had no URL to redirect audio to.
+    """
+
+    def test_database_url_prefers_our_own_variable(self):
+        with mock.patch.object(config, "DATABASE_URL", "postgresql://ours/db"), \
+                mock.patch.dict(os.environ, {"MIX_DB_POSTGRES_URL": "postgresql://theirs/db"}):
+            self.assertEqual(config.database_url(), "postgresql://ours/db")
+
+    def test_database_url_falls_back_to_the_injected_one(self):
+        with mock.patch.object(config, "DATABASE_URL", None), \
+                mock.patch.dict(os.environ, {"MIX_DB_POSTGRES_URL": "postgresql://pooled/db"}):
+            self.assertEqual(config.database_url(), "postgresql://pooled/db")
+            self.assertFalse(config.is_local_sqlite())
+
+    def test_pooled_url_wins_over_non_pooling(self):
+        """A serverless function must use the transaction pooler."""
+        with mock.patch.object(config, "DATABASE_URL", None), \
+                mock.patch.dict(os.environ, {
+                    "MIX_DB_POSTGRES_URL": "postgresql://pooled/db",
+                    "MIX_DB_POSTGRES_URL_NON_POOLING": "postgresql://direct/db"}):
+            self.assertEqual(config.database_url(), "postgresql://pooled/db")
+
+    def test_empty_variable_forces_sqlite_and_does_not_fall_through(self):
+        """run_tests.sh and CI pass `DJMIXER_DATABASE_URL=` to force SQLite.
+        Set-but-empty must mean exactly that: falling through to an injected
+        URL would point the whole suite at the production database."""
+        with mock.patch.object(config, "DATABASE_URL", ""), \
+                mock.patch.dict(os.environ, {"MIX_DB_POSTGRES_URL": "postgresql://prod/db"}):
+            self.assertTrue(config.is_local_sqlite())
+
+    def test_non_postgres_injected_value_is_ignored(self):
+        """An empty or placeholder value must not be mistaken for a URL —
+        `vercel env pull` writes [SENSITIVE] for secrets."""
+        with mock.patch.object(config, "DATABASE_URL", None), \
+                mock.patch.dict(os.environ, {}, clear=False):
+            for var in config.DATABASE_URL_FALLBACK_VARS:
+                os.environ.pop(var, None)
+            # `vercel env pull` writes this placeholder for secret values.
+            os.environ["MIX_DB_POSTGRES_URL"] = "[SENSITIVE]"
+            self.assertTrue(config.is_local_sqlite())
+
+    def test_blob_base_url_derived_from_store_id(self):
+        derive = storage.VercelBlobStore.base_url_from_store_id
+        self.assertEqual(derive("store_9fJ05RBNkmUdVmGn"),
+                         "https://9fj05rbnkmudvmgn.public.blob.vercel-storage.com")
+
+    def test_blob_base_url_derivation_rejects_a_non_store_id(self):
+        derive = storage.VercelBlobStore.base_url_from_store_id
+        for bad in ("", None, "9fj05", "prj_abc"):
+            self.assertEqual(derive(bad), "")
+
+    def test_explicit_base_url_still_wins(self):
+        with mock.patch.dict(os.environ, {"BLOB_STORE_ID": "store_aaaa"}):
+            store = storage.VercelBlobStore(base_url="https://explicit.example.com")
+            self.assertEqual(store.url_for("audio/1.wav"),
+                             "https://explicit.example.com/audio/1.wav")
+
+    def test_store_id_alone_is_enough_to_serve(self):
+        env = {"BLOB_STORE_ID": "store_9fJ05RBNkmUdVmGn"}
+        with mock.patch.dict(os.environ, env, clear=False):
+            os.environ.pop("BLOB_BASE_URL", None)
+            store = storage.VercelBlobStore()
+            self.assertEqual(
+                store.url_for("variants/1001_120.wav"),
+                "https://9fj05rbnkmudvmgn.public.blob.vercel-storage.com"
+                "/variants/1001_120.wav")
 
 
 class TestAudioRedirect(unittest.TestCase):
@@ -137,11 +213,19 @@ class TestVercelBlobStoreConfig(unittest.TestCase):
                          "https://cdn.example.com/audio/1001.wav")
 
     def test_missing_base_url_raises_rather_than_guessing(self):
-        """api/index.py sets BLOB_BACKEND=vercel, so an unset BLOB_BASE_URL is
-        a live deploy failure. It must say so, not emit a relative path."""
-        store = storage.VercelBlobStore(base_url="")
-        with self.assertRaises(storage.BlobStoreError) as ctx:
-            store.url_for("audio/1001.wav")
+        """api/index.py sets BLOB_BACKEND=vercel, so having no way at all to
+        build a URL is a live deploy failure. It must say so, not emit a
+        relative path.
+
+        The store id is cleared too: it is now a second source for the base
+        URL, so leaving it set would mean this asserted nothing.
+        """
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("BLOB_BASE_URL", None)
+            os.environ.pop("BLOB_STORE_ID", None)
+            store = storage.VercelBlobStore(base_url="")
+            with self.assertRaises(storage.BlobStoreError) as ctx:
+                store.url_for("audio/1001.wav")
         self.assertIn("BLOB_BASE_URL", str(ctx.exception))
 
     def _fake_cli(self, stdout="", stderr="", returncode=0):

@@ -35,7 +35,12 @@ class TestEssentiaEngine(unittest.TestCase):
         only by _analyze_essentia."""
         with read() as q:
             tracks = q.list_tracks()
-        for t in tracks:
+        # ND tracks are refused before download now, so they carry a row and no
+        # analysis. Assert over the ones that were analysed, and require that
+        # there ARE some — otherwise an empty catalog would pass silently.
+        analysed = [t for t in tracks if t.analysis_json]
+        self.assertTrue(analysed, "no track carries an analysis")
+        for t in analysed:
             a = t.analysis_json
             self.assertEqual(a["engine"], "essentia", t.id)
             self.assertIn("engine_version", a)
@@ -69,7 +74,9 @@ class TestEssentiaEngine(unittest.TestCase):
     def test_key_maps_into_camelot(self):
         with read() as q:
             tracks = q.list_tracks()
-        for t in tracks:
+        analysed = [t for t in tracks if t.analysis_json]
+        self.assertTrue(analysed, "no track carries an analysis")
+        for t in analysed:
             self.assertIn(t.analysis_json["key"]["camelot"],
                           set(analysis.CAMELOT.values()), t.id)
 
@@ -221,15 +228,21 @@ class TestCatalogConfig(unittest.TestCase):
 
 class TestJamendoCredentials(unittest.TestCase):
     def test_client_id_accepts_either_env_name(self):
+        """JAMENDO_API_CLIENT is canonical — it is what Jamendo's dashboard
+        calls the field and what .env actually holds — and JAMENDO_CLIENT_ID
+        remains an accepted alias for anyone following older docs."""
         saved = {k: os.environ.get(k) for k in config.JAMENDO_CLIENT_ID_VARS}
         try:
             for k in config.JAMENDO_CLIENT_ID_VARS:
                 os.environ.pop(k, None)
             self.assertIsNone(config.jamendo_client_id())
+
+            os.environ["JAMENDO_CLIENT_ID"] = "legacy-alias"
+            self.assertEqual(config.jamendo_client_id(), "legacy-alias")
+
+            # The dashboard name wins when both are present.
             os.environ["JAMENDO_API_CLIENT"] = "from-dashboard"
             self.assertEqual(config.jamendo_client_id(), "from-dashboard")
-            os.environ["JAMENDO_CLIENT_ID"] = "documented-name"
-            self.assertEqual(config.jamendo_client_id(), "documented-name")
         finally:
             for k, v in saved.items():
                 if v is None:
