@@ -1,0 +1,19 @@
+.env
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+
+# Node / Playwright tooling (test-only; the app itself has no build step)
+node_modules/
+test-results/
+playwright-report/
+blob-report/
+
+# Sibling session worktrees live here — never part of the tree
+.claude/worktrees/
+
+# Generated at runtime — safe to delete, rebuilt by ingestion
+data/
+data-e2e/

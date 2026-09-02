@@ -1,0 +1,18 @@
+{
+  "name": "dj-mixer-prototype",
+  "version": "1.0.0",
+  "private": true,
+  "description": "DJ mixer prototype — test tooling only. The app itself has no build step and ships no npm runtime dependencies.",
+  "type": "module",
+  "scripts": {
+    "test": "./run_tests.sh",
+    "test:backend": ".venv/bin/python -m unittest discover -s tests/backend -t .",
+    "test:logic": "node --test tests/frontend/*.test.mjs",
+    "test:e2e": "playwright test",
+    "test:e2e:headed": "playwright test --headed",
+    "test:e2e:report": "playwright show-report"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.56.0"
+  }
+}

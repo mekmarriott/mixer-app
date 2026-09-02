@@ -1,0 +1,14 @@
+# Backend runtime dependencies.
+#
+#   python3 -m venv .venv && . .venv/bin/activate && pip install -r requirements.txt
+#
+# Optional, auto-detected at import time and deliberately NOT pinned here:
+#   essentia    -> backend/analysis.py  (HAVE_ESSENTIA); AGPL-3.0, see docs/requirements.md §3
+#   rubberband  -> backend/stretch.py   (CLI on PATH);   GPL-2.0/commercial, same section
+# Both have real in-repo fallbacks, so the app runs without them. Installing
+# them is a licensing decision, not a setup step — keep them out of this file.
+
+Flask==3.1.0
+numpy==2.2.1
+scipy==1.15.0
+requests==2.32.3        # jamendo mode only (config/tracks.json "mode": "jamendo")

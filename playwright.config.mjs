@@ -1,0 +1,90 @@
+// Playwright config — the browser-automation suite (docs/automation-test-manifest.md).
+//
+// These tests cover the testing-document items that unit tests structurally
+// cannot: real drag-and-drop, canvas rendering, WebAudio playback timing, and
+// network behaviour during interaction. Everything else stays in the faster
+// unittest / node:test suites — see the manifest for the full ID map.
+import { defineConfig, devices } from "@playwright/test";
+import { fileURLToPath } from "node:url";
+import path from "node:path";
+
+const ROOT = path.dirname(fileURLToPath(import.meta.url));
+
+// Deliberately NOT 5050: `python -m backend.app` uses that port, so a dev
+// server (or another working session) is usually already sitting on it. Its
+// catalog is whatever happens to be in ./data — testing against that would be
+// non-deterministic, so the suite runs its own server on its own port.
+const PORT = 5199;
+const BASE_URL = `http://127.0.0.1:${PORT}`;
+
+export default defineConfig({
+  testDir: "./tests/e2e",
+  testMatch: "**/*.spec.mjs",
+
+  // One shared Flask server + one SQLite file: the suite runs serially.
+  fullyParallel: false,
+  workers: 1,
+  forbidOnly: !!process.env.CI,
+  // Retries are a MITIGATION FOR THE API-01 DEFECT, not a general allowance
+  // for flaky tests. The shared-SQLite read race (see
+  // tests/e2e/api-concurrency.spec.mjs) makes roughly 1 in 3 runs drop a setup
+  // request, which fails a test that is otherwise deterministic. Drop this back
+  // to 0 once API-01 is fixed — if anything still flakes after that, the test
+  // is wrong and should be repaired rather than retried.
+  retries: 2,
+  reporter: process.env.CI ? [["list"], ["html", { open: "never" }]] : [["list"]],
+
+  // Playback assertions wait on real audio time; keep the per-test budget generous.
+  timeout: 60_000,
+  expect: { timeout: 10_000 },
+
+  use: {
+    baseURL: BASE_URL,
+    trace: "retain-on-failure",
+    screenshot: "only-on-failure",
+    video: "off",
+    // Canvas pixel assertions (P4-15, P4-21) assume 1 device px per CSS px.
+    deviceScaleFactor: 1,
+    viewport: { width: 1280, height: 900 },
+  },
+
+  projects: [
+    {
+      name: "chromium",
+      use: {
+        ...devices["Desktop Chrome"],
+        deviceScaleFactor: 1,
+        viewport: { width: 1280, height: 900 },
+        launchOptions: {
+          args: [
+            // The mix only plays after a click, which already counts as user
+            // activation — this just removes any ambiguity in headless.
+            "--autoplay-policy=no-user-gesture-required",
+            "--mute-audio",
+          ],
+        },
+      },
+    },
+  ],
+
+  // Ingestion runs on first boot into a dedicated data dir, so the e2e catalog
+  // is independent of whatever is in ./data. First run takes ~1 min; after that
+  // the dir is cached and startup is immediate. Delete data-e2e/ to rebuild.
+  webServer: {
+    // create_app() is invoked directly rather than via `python -m backend.app`
+    // so the port can be chosen here without patching the backend.
+    command:
+      `.venv/bin/python -c "from backend.app import create_app; ` +
+      `create_app().run(host='127.0.0.1', port=${PORT})"`,
+    url: `${BASE_URL}/api/health`,
+    // Must be ABSOLUTE. Ingestion stores file paths in SQLite as given, and
+    // Flask's send_file resolves relative paths against the app root
+    // (backend/), not the cwd — a relative value here yields 404/500 on every
+    // audio and waveform request.
+    env: { DJMIXER_DATA: path.join(ROOT, "data-e2e"), PYTHONUNBUFFERED: "1" },
+    timeout: 300_000,
+    reuseExistingServer: !process.env.CI,
+    stdout: "pipe",
+    stderr: "pipe",
+  },
+});
