@@ -75,6 +75,12 @@ SELECT id FROM tracks
 WHERE analysis_json IS NOT NULL AND native_envelope IS NULL
 ORDER BY id;
 
+-- Rewrite a stored analysis in place. Used to add a field a track predates
+-- without re-running detection: re-analysing could land on a different tempo,
+-- and the rendered variants are keyed to the tempo already stored.
+-- name: SetTrackAnalysis :exec
+UPDATE tracks SET analysis_json = :analysis_json WHERE id = :id;
+
 -- name: SetTrackPopularity :exec
 UPDATE tracks SET popularity = :popularity WHERE id = :id;
 

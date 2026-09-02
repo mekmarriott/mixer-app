@@ -79,6 +79,7 @@ FROM tracks WHERE id = :id""",
     "ListTracksMissingNativeEnvelope": """SELECT id FROM tracks
 WHERE analysis_json IS NOT NULL AND native_envelope IS NULL
 ORDER BY id""",
+    "SetTrackAnalysis": """UPDATE tracks SET analysis_json = :analysis_json WHERE id = :id""",
     "SetTrackPopularity": """UPDATE tracks SET popularity = :popularity WHERE id = :id""",
     "ListTracksMissingPopularity": """SELECT id FROM tracks WHERE popularity IS NULL ORDER BY id""",
     "SetTrackDeckWaveform": """UPDATE tracks SET deck_waveform = :deck_waveform WHERE id = :id""",
@@ -427,6 +428,15 @@ class Queries:
         rows = cur.fetchall()
         cur.close()
         return [models.ListTracksMissingNativeEnvelopeRow._from_row(r) for r in rows]
+
+    def set_track_analysis(self, analysis_json, id):
+        """`SetTrackAnalysis` (:exec) -> None"""
+        params = {
+            "analysis_json": encode(analysis_json, "JSONDOC", self._dialect),
+            "id": encode(id, "TEXT", self._dialect),
+        }
+        cur = self._execute("SetTrackAnalysis", params)
+        cur.close()
 
     def set_track_popularity(self, popularity, id):
         """`SetTrackPopularity` (:exec) -> None"""

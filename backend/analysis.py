@@ -138,19 +138,23 @@ def _essentia_frames(samples, sr):
         flux.append(float(flux_of(spec)))
         mags.append(spec)
 
+    hop_dur = config.HOP_SIZE / sr
     if not mags:
-        return {"rms": [], "flux": [], "bass_ratio": [],
-                "hop_dur": config.HOP_SIZE / sr}
+        return {"rms": [], "flux": [], "bass_ratio": [], "hop_dur": hop_dur,
+                "chroma": [], "chroma_block": 1}
 
     mag = np.asarray(mags).T                       # (bins, frames)
     freqs = np.linspace(0.0, sr / 2.0, mag.shape[0])
     bass = mag[(freqs >= 20) & (freqs <= 150), :].sum(axis=0)
     total = mag.sum(axis=0) + 1e-12
+    block_frames = max(1, int(round(config.CHROMA_BLOCK_S / hop_dur)))
     return {
         "rms": rms,
         "flux": flux,
         "bass_ratio": (bass / total).tolist(),
-        "hop_dur": config.HOP_SIZE / sr,
+        "hop_dur": hop_dur,
+        "chroma": chroma_blocks(mag, freqs, block_frames),
+        "chroma_block": block_frames,
     }
 
 
@@ -280,6 +284,45 @@ def detect_key(mag, freqs):
             "confidence": round(float(best[0]), 4)}
 
 
+def chroma_blocks(mag, freqs, block_frames):
+    """Normalised 12-bin chroma per block of `block_frames` analysis frames.
+
+    Key detection already folds a spectrum onto pitch classes, but it does it
+    once for the whole track and keeps only the answer. Transition placement
+    needs to know what is sounding in a PARTICULAR window — without it the
+    scorer has energy, onset phase and a bass-band ratio, and no idea whether
+    the two windows are in tune with each other.
+
+    Aggregated into blocks rather than kept per frame: twelve arrays at frame
+    rate would add megabytes to an analysis that is read whole on every
+    transition request, and harmonic content does not change that fast.
+    """
+    valid = (freqs > 80) & (freqs < 2500)
+    f = freqs[valid]
+    midi = 69 + 12 * np.log2(np.maximum(f, 1e-9) / 440.0)
+    pc = np.round(midi).astype(int) % 12
+
+    band = mag[valid, :]                                # (bins, frames)
+    n_frames = band.shape[1]
+    if n_frames == 0:
+        return []
+    # Fold bins onto pitch classes once, for every frame at once.
+    folded = np.zeros((12, n_frames))
+    for k in range(12):
+        rows = pc == k
+        if rows.any():
+            folded[k] = band[rows, :].sum(axis=0)
+
+    out = []
+    for start in range(0, n_frames, block_frames):
+        block = folded[:, start:start + block_frames].sum(axis=1)
+        block = np.log1p(block)         # compress dynamics: pattern > loudness
+        total = block.sum()
+        out.append((block / total).round(5).tolist() if total > 0
+                   else [0.0] * 12)
+    return out
+
+
 def frame_features(samples, sr, mag, freqs):
     """Per-hop RMS energy, spectral flux, bass-band energy."""
     hop = config.HOP_SIZE
@@ -291,21 +334,67 @@ def frame_features(samples, sr, mag, freqs):
     flux = _onset_strength(mag)
     bass = mag[(freqs >= 20) & (freqs <= 150), :].sum(axis=0)
     total = mag.sum(axis=0) + 1e-12
+    hop_dur = config.HOP_SIZE / sr
+    block_frames = max(1, int(round(config.CHROMA_BLOCK_S / hop_dur)))
     return {
         "rms": rms.tolist(),
         "flux": flux.tolist(),
         "bass_ratio": (bass / total).tolist(),
-        "hop_dur": config.HOP_SIZE / sr,
+        "hop_dur": hop_dur,
+        "chroma": chroma_blocks(mag, freqs, block_frames),
+        "chroma_block": block_frames,
     }
 
 
 def prefix_sums(frames):
     """Cumulative sums enabling O(1) window aggregates (Phase 1 step 5)."""
-    return {
+    out = {
         "rms": np.concatenate([[0.0], np.cumsum(frames["rms"])]).tolist(),
         "flux": np.concatenate([[0.0], np.cumsum(frames["flux"])]).tolist(),
         "bass_ratio": np.concatenate([[0.0], np.cumsum(frames["bass_ratio"])]).tolist(),
     }
+    blocks = frames.get("chroma") or []
+    if blocks:
+        arr = np.asarray(blocks)                         # (n_blocks, 12)
+        out["chroma"] = np.vstack([np.zeros((1, 12)),
+                                   np.cumsum(arr, axis=0)]).tolist()
+    return out
+
+
+def window_chroma(prefix, block_frames, start_frame, end_frame):
+    """Mean chroma over a frame window, from the block prefix sums.
+
+    Frame indices rather than seconds on purpose: rescaling an analysis onto a
+    different grid changes the time scalars, never the frame indexing, so this
+    reads the same before and after a stretch.
+    """
+    table = prefix.get("chroma")
+    if not table or not block_frames:
+        return None
+    n = len(table) - 1
+    lo = max(0, min(n, int(start_frame // block_frames)))
+    hi = max(lo + 1, min(n, int(-(-end_frame // block_frames))))
+    span = hi - lo
+    vec = [(table[hi][k] - table[lo][k]) / span for k in range(12)]
+    total = sum(vec)
+    return [v / total for v in vec] if total > 0 else None
+
+
+def chroma_similarity(a, b):
+    """Cosine similarity of two chroma vectors, on 0..1.
+
+    Both are non-negative and normalised, so the cosine already lands in that
+    range: 1 when the same pitch classes dominate both windows, falling as the
+    energy sits in classes the other does not share.
+    """
+    if not a or not b:
+        return None
+    dot = sum(x * y for x, y in zip(a, b))
+    na = sum(x * x for x in a) ** 0.5
+    nb = sum(y * y for y in b) ** 0.5
+    if na <= 0 or nb <= 0:
+        return None
+    return max(0.0, min(1.0, dot / (na * nb)))
 
 
 def window_mean(prefix, start, end):

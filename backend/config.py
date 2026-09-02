@@ -282,6 +282,13 @@ MATCH_SCORE_CUTOFF = 0.40               # below this a candidate is not recommen
 RECOMMENDATION_LIMIT = 10           # one deck page; the rest is fetched on scroll
 
 # Transition detection (Phase 3)
+# Chroma is aggregated into blocks of about this long before it is stored.
+# Per-frame chroma would be twelve arrays the length of the track — megabytes
+# on a blob that /api/transitions already reads in full — and harmonic content
+# does not turn over anywhere near frame rate. A block is fine enough that an
+# eight-bar window still spans a dozen or so of them.
+CHROMA_BLOCK_S = 1.0
+
 WINDOW_BARS = 8                          # transition window length in bars
 HOP_BARS = 1                             # sliding hop in bars
 MARKER_TOP_N = 5                         # markers surfaced to the UI

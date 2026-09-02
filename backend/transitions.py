@@ -11,16 +11,21 @@ window score = 0.35*energy_compat + 0.30*phase_alignment
 import numpy as np
 
 from . import config
-from .analysis import window_mean
+from .analysis import chroma_similarity, window_chroma, window_mean
 from .segmentation import ENTRY_ROLES, EXIT_ROLES
 
-W_ENERGY, W_PHASE, W_SPECTRAL, W_ROLE = 0.35, 0.30, 0.20, 0.15
+# Harmony carries the most weight of any single term. The scorer previously
+# had none at all: energy, onset phase, a bass-band ratio and a section role,
+# and no idea whether the two windows were in tune. Two tracks in compatible
+# keys can still clash over any particular pair of windows, and that clash is
+# what a listener notices first.
+W_HARMONIC, W_ENERGY, W_PHASE, W_SPECTRAL, W_ROLE = 0.35, 0.20, 0.20, 0.15, 0.10
 
 # Grading a transition's LENGTH is a different question from grading its
 # placement, so it uses its own weights over the same components. How well two
 # windows blend decides how long they can be held together: a clean blend
 # sustains a long fade, a rough one has to be got over with.
-F_SPECTRAL, F_ENERGY, F_PHASE = 0.50, 0.30, 0.20
+F_HARMONIC, F_SPECTRAL, F_ENERGY, F_PHASE = 0.40, 0.25, 0.20, 0.15
 
 # Sections a track can be entered over — sparse enough to lay another track
 # across. The contiguous run of them at B's entry is the room a fade has.
@@ -28,10 +33,23 @@ BLEND_ROLES = ("intro", "breakdown", "build")
 
 
 def fade_bars(components):
-    """Fade length in bars, graded from how well the two windows blend."""
-    fitness = (F_SPECTRAL * components["spectral"]
-               + F_ENERGY * components["energy"]
-               + F_PHASE * components["phase"])
+    """Fade length in bars, graded from how well the two windows blend.
+
+    Harmony leads here too, and for the same reason it leads placement: a
+    dissonant blend is worse the longer it is held, so it should be got over
+    with rather than dwelt on.
+    """
+    harmonic = components.get("harmonic")
+    if harmonic is None:
+        denom = F_SPECTRAL + F_ENERGY + F_PHASE
+        fitness = (F_SPECTRAL * components["spectral"]
+                   + F_ENERGY * components["energy"]
+                   + F_PHASE * components["phase"]) / denom
+    else:
+        fitness = (F_HARMONIC * harmonic
+                   + F_SPECTRAL * components["spectral"]
+                   + F_ENERGY * components["energy"]
+                   + F_PHASE * components["phase"])
     fitness = min(1.0, max(0.0, fitness))
     ladder = config.FADE_BARS_LADDER
     return int(ladder[round(fitness * (len(ladder) - 1))])
@@ -152,6 +170,8 @@ def score_pair(analysis_a, segments_a, analysis_b, segments_b):
     pa, pb = analysis_a["prefix"], analysis_b["prefix"]
     hop_dur_a = analysis_a["frames"]["hop_dur"]
     hop_dur_b = analysis_b["frames"]["hop_dur"]
+    block_a = analysis_a["frames"].get("chroma_block")
+    block_b = analysis_b["frames"].get("chroma_block")
 
     candidates = []
     for sa in starts_a:
@@ -164,6 +184,7 @@ def score_pair(analysis_a, segments_a, analysis_b, segments_b):
         # entries favor early in B (see design doc §Transition scoring).
         pos_a = sa / max(1, n_a)
         fit_a = 0.6 * role_a + 0.4 * pos_a
+        ch_a = window_chroma(pa, block_a, sa, end_a)
         for sb in starts_b:
             end_b = min(sb + win_b, n_b)
             eb = window_mean(pb["rms"], sb, end_b)
@@ -178,8 +199,20 @@ def score_pair(analysis_a, segments_a, analysis_b, segments_b):
             s_phase = 0.5 * (pha + phb)
             s_spec = 1.0 - min(1.0, (ba + bb))       # clashing bass penalized
             s_role = 0.5 * (fit_a + fit_b)
-            score = (W_ENERGY * s_energy + W_PHASE * s_phase
-                     + W_SPECTRAL * s_spec + W_ROLE * s_role)
+            # How far the two windows agree on which pitch classes are
+            # sounding. An analysis written before chroma was stored has none,
+            # and then the term is dropped and the rest reweighted rather than
+            # scored as a clash — absent evidence is not evidence of dissonance.
+            ch_b = window_chroma(pb, block_b, sb, end_b)
+            s_harm = chroma_similarity(ch_a, ch_b)
+            if s_harm is None:
+                denom = W_ENERGY + W_PHASE + W_SPECTRAL + W_ROLE
+                score = (W_ENERGY * s_energy + W_PHASE * s_phase
+                         + W_SPECTRAL * s_spec + W_ROLE * s_role) / denom
+            else:
+                score = (W_HARMONIC * s_harm + W_ENERGY * s_energy
+                         + W_PHASE * s_phase + W_SPECTRAL * s_spec
+                         + W_ROLE * s_role)
             candidates.append({
                 "a_start_s": round(sa * hop_dur_a, 4),
                 "b_start_s": round(sb * hop_dur_b, 4),
@@ -187,7 +220,9 @@ def score_pair(analysis_a, segments_a, analysis_b, segments_b):
                 "components": {"energy": round(float(s_energy), 4),
                                "phase": round(float(s_phase), 4),
                                "spectral": round(float(s_spec), 4),
-                               "role": round(float(s_role), 4)},
+                               "role": round(float(s_role), 4),
+                               "harmonic": (None if s_harm is None
+                                            else round(float(s_harm), 4))},
             })
 
     candidates.sort(key=lambda c: c["score"], reverse=True)
