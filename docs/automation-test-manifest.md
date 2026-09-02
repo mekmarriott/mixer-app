@@ -18,8 +18,8 @@ grep -rhoE "P[1-4]-[0-9]{2}" tests/ | sort -u
 | Suite | Runner | Count | Runs in | What it is for |
 |---|---|---|---|---|
 | **Backend** | `unittest` (stdlib) | 128 | ~8 s | Pipeline, compliance gates, API contract, startup precompute and DB concurrency. Builds a real 5-track fixture catalog through one full ingestion. |
-| **Frontend logic** | `node:test` (stdlib) | 66 | <1 s | The pure interaction modules (`state`, `align`, `crossfade`, `navbar`, `deck`, `attribution`, `boot`) — no DOM, no WebAudio. |
-| **Browser** | Playwright + Chromium | 29 | ~52 s | What the other two structurally cannot reach: native drag-and-drop, canvas pixels, the WebAudio clock, and real network behaviour. |
+| **Frontend logic** | `node:test` (stdlib) | 70 | <1 s | The pure interaction modules (`state`, `align`, `crossfade`, `navbar`, `deck`, `attribution`, `boot`) — no DOM, no WebAudio. |
+| **Browser** | Playwright + Chromium | 32 | ~57 s | What the other two structurally cannot reach: native drag-and-drop, canvas pixels, the WebAudio clock, and real network behaviour. |
 | **Manual** | a human with ears | 1 | — | Perceptual judgement only. |
 
 ```bash
@@ -115,7 +115,9 @@ manual sign-off list in `design-document.md` §12 before Playwright existed.
 | P4-13 | Percentage **and** matching pie per row | Logic | `P4-13: numeric percentage matches the score`, `…pie fill angle…`, `…path geometry…`, `…edge cases…` |
 | **P4-14** | **Rows draggable; drop enters mixing state** | **Browser** | `P4-14 deck rows are draggable and dropping one enters the mixing state` |
 | **P4-15** | **Track 2 renders in a distinct colour** | **Browser** | `P4-15 track 2 renders in a colour distinct from track 1` |
-| P4-16 | Drop auto-snaps to the best marker | Logic | `P4-16: on drop, offset snaps to the highest-scoring marker`, `…empty marker list…` |
+| P4-16 | Drop auto-snaps to the best marker, and lands on its arrow | Logic + **Browser** | `P4-16: a marker's offset is where TRACK 2 starts…`, `P4-16: dropOffset places a dropped track on the best marker` · `P4-16 a dropped track is placed at the best transition point`, `P4-16 the dropped track visibly lands on the highest-scoring arrow`, `P4-16 every arrow marks a position the incoming track could occupy` |
+| P4-16b | A markerless pair still places the track sensibly | Logic | `P4-16: with NO markers a drop overlaps the previous track's tail`, `…never goes negative on a short track` |
+| P4-12b | Unusable tracks are omitted from the deck, not greyed | Backend | `test_inf_05_unmixable_tracks_are_hidden_not_greyed`, `test_inf_05_unfinished_ingestion_is_hidden`, `test_inf_05_unusable_tracks_can_still_be_requested_explicitly` |
 | P4-17 | Overlaps exist only between neighbours in the chain | Logic | `P4-17: overlaps exist only between neighbours`, `P4-17: no overlap when a track starts after its predecessor ends` |
 | P4-18 | Up to 100 tracks; the 101st is refused with a reason | Logic + **Browser** | `P4-18: a mix accepts up to 100 tracks`, `P4-18: a long mix spans hours…` · `P4-18 a mix chains well past the old two-track cap` |
 | P4-18b | Edits ripple rigidly, preserving downstream transitions | Logic + **Browser** | `P4-18b: moving a track ripples the whole tail rigidly`, `…preserves every downstream transition unchanged`, `…inserting in the middle…`, `…deleting in the middle…`, `…can close a transition entirely…` · `P4-18b adding a track ripples the mix longer, never shorter` |
@@ -238,10 +240,10 @@ one gap per track — because that is all a mix is once the audio is rendered.
 
 ### Not yet covered
 
-**The mix picker has no browser test.** MIX-01..05 cover the server completely,
-and `P4-05b` proves a named mix survives a reload through the real UI, but no
-test drives the dropdown itself — selecting a different saved mix, or picking
-"+ New mix" to return to the zero state. Verified by hand.
+**The mix picker is only partly covered.** Every browser test now selects its
+mix through the dropdown (`bootApp`), so choosing a saved mix and loading it is
+exercised constantly. What is still untested is picking "+ New mix" from the
+menu, and switching between two mixes that both have tracks. Verified by hand.
 
 **Three-track overlap is only asserted server-side.** `state.clampOffset` stops
 the drag in the browser and mirrors `backend/mixes.check_overlaps`, but nothing

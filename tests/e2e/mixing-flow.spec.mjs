@@ -12,13 +12,13 @@ test.describe("deck and two-track mixing state", () => {
   test("P4-14 deck rows are draggable and dropping one enters the mixing state", async ({ page }) => {
     await bootApp(page);
 
-    // Every mixable row advertises itself as draggable; ND rows must not.
+    // Every row in the opening deck is usable: tracks that cannot be mixed
+    // (ND licence, or ingestion not finished) are omitted rather than shown
+    // disabled, so there is nothing here that would refuse a drag.
     const rows = page.locator("#deck .deck-row");
+    expect(await rows.count()).toBeGreaterThan(0);
+    await expect(page.locator('#deck .deck-row[draggable="false"]')).toHaveCount(0);
     await expect(rows.first()).toHaveAttribute("draggable", "true");
-    const ndRows = page.locator('#deck .deck-row[draggable="false"]');
-    for (let i = 0; i < (await ndRows.count()); i++) {
-      await expect(ndRows.nth(i)).toHaveAttribute("title", /ND-licensed/);
-    }
 
     await addFirstTrack(page);
     await addSecondTrack(page);

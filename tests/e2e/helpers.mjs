@@ -32,7 +32,7 @@ export async function bootApp(page, { fresh = true } = {}) {
   await expect(page.locator(DECK_ROW).first()).toBeVisible({ timeout: 60_000 });
 
   if (fresh) {
-    await page.evaluate(() =>
+    const created = await page.evaluate(() =>
       fetch("/api/mixes", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -40,6 +40,15 @@ export async function bootApp(page, { fresh = true } = {}) {
       }).then((r) => r.json()));
     await page.reload();
     await expect(page.locator(DECK_ROW).first()).toBeVisible({ timeout: 60_000 });
+
+    // Select it EXPLICITLY rather than trusting boot's "resume the most
+    // recently edited mix". A previous test's autosave can still be in flight
+    // when this one starts, and it re-stamps that mix as the most recent —
+    // which would silently start this test on a populated mix.
+    await expect(page.locator(`#mix-select option[value="${created.id}"]`))
+      .toHaveCount(1);
+    await page.selectOption("#mix-select", created.id);
+    await expect(page.locator("#deck-sub")).toContainText("Browse by genre");
   }
 
   // Let boot traffic settle so tests that count requests start from silence.
@@ -174,6 +183,59 @@ export function countMarkerClusters(columns, gap = 6) {
     if (columns[i] - columns[i - 1] > gap) clusters++;
   }
   return clusters;
+}
+
+/**
+ * Marker arrows as {centre, height} in device px, plus the leftmost column of
+ * each track colour. Used to assert that a dropped track actually lands on the
+ * marker it snapped to — the property a user reads as "it snapped".
+ */
+export async function markerAndTrackGeometry(page) {
+  return page.evaluate(({ colors, laneH }) => {
+    const canvas = document.querySelector("#timeline");
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    const { width: W, height: H } = canvas;
+    const near = (r, g, b, c) =>
+      Math.abs(r - c[0]) < 30 && Math.abs(g - c[1]) < 30 && Math.abs(b - c[2]) < 30;
+
+    // Marker lane: gold arrows, grouped into individual arrows.
+    const lane = ctx.getImageData(0, 0, W, laneH - 3).data;
+    const cols = {};
+    for (let y = 0; y < laneH - 3; y++) {
+      for (let x = 0; x < W; x++) {
+        const i = (y * W + x) * 4;
+        if (lane[i + 3] > 200 && near(lane[i], lane[i + 1], lane[i + 2], colors.marker)) {
+          cols[x] = (cols[x] || 0) + 1;
+        }
+      }
+    }
+    const xs = Object.keys(cols).map(Number).sort((a, b) => a - b);
+    const groups = [];
+    let cur = [];
+    for (const x of xs) {
+      if (cur.length && x - cur[cur.length - 1] > 6) { groups.push(cur); cur = []; }
+      cur.push(x);
+    }
+    if (cur.length) groups.push(cur);
+    const arrows = groups.map((g) => ({
+      centre: (g[0] + g[g.length - 1]) / 2,
+      height: Math.max(...g.map((x) => cols[x])),
+    }));
+
+    // Leftmost column of each track colour, below the lane.
+    const wave = ctx.getImageData(0, laneH, W, H - laneH).data;
+    const firstX = (colour) => {
+      for (let x = 0; x < W; x++) {
+        for (let y = 0; y < H - laneH; y++) {
+          const i = (y * W + x) * 4;
+          if (wave[i + 3] > 200 && near(wave[i], wave[i + 1], wave[i + 2], colour)) return x;
+        }
+      }
+      return null;
+    };
+    return { width: W, arrows, track1Start: firstX(colors.track1),
+             track2Start: firstX(colors.track2) };
+  }, { colors: COLORS, laneH: MARKER_LANE_H });
 }
 
 /** Bounding box of the timeline canvas, for pointer geometry. */

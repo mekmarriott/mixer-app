@@ -23,6 +23,21 @@ export function snapOffset(markers) {
   return m ? markerToOffset(m) : 0;
 }
 
+// Where an incoming track lands when it is dropped.
+//
+// Normally the best-scoring marker. When a pair yields NO candidates — a real
+// possibility for two tracks whose structures never line up — falling back to
+// snapOffset's 0 would stack the new track exactly on its predecessor, which
+// looks like the snap simply did not happen. Instead it overlaps the tail of
+// the previous track by a plain crossfade's length.
+export const DEFAULT_OVERLAP_S = 16;
+
+export function dropOffset(markers, prevDuration = 0, overlapS = DEFAULT_OVERLAP_S) {
+  const m = bestMarker(markers);
+  if (m) return markerToOffset(m);
+  return Math.max(0, prevDuration - overlapS);
+}
+
 // Beat-grid quantization — a HARD constraint, not a preference.
 //
 // Previously this was a magnetic *pull*: strong near an attractor, absent

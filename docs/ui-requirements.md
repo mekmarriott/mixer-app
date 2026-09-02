@@ -34,6 +34,7 @@
 
 ### Suggested Song Deck
 - [ ] List is ranked by mixing score (highest first) for the currently selected track — sourced from the Phase 2 recommendation/matching logic
+- [ ] **Only usable tracks are listed.** A track that cannot be mixed — an ND licence forbids the time-stretch, or ingestion has not finished so no variants exist — is omitted rather than shown greyed out. A disabled row costs a deck slot, invites a drag that will be refused, and reads as a fault rather than a licence term
 - [ ] Each row displays: waveform preview, song name + artist, numeric match percentage, **and** a circular/pie visual filled proportionally to that percentage (both representations shown together, not one or the other)
 - [ ] Each row is **draggable** from the deck; dropping it onto the Track Window initiates the overlay/mixing state described below
 

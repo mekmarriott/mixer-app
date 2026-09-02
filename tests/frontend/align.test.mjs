@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import {
   markerToOffset, bestMarker, snapOffset, snapOffsetTo, nearestBeat,
   quantizeToBeats, beatsBetween, markerSizePx, MARKER_RADIUS_S,
+  dropOffset, DEFAULT_OVERLAP_S,
 } from "../../frontend/js/align.js";
 
 const marker = (a, b, score) => ({ a_start_s: a, b_start_s: b, score });
@@ -27,6 +28,35 @@ test("P4-16: snap handles an empty marker list", () => {
 
 test("markerToOffset never returns a negative offset", () => {
   assert.equal(markerToOffset(marker(2, 30, 0.5)), 0);
+});
+
+test("P4-16: a marker's offset is where TRACK 2 starts, not where A exits", () => {
+  // The transition begins 48s into A and 3s into B, so B has to start 45s in
+  // for its entry to land on A's exit. This is the position the marker arrow
+  // is drawn at and the position a drop lands on — if they disagreed, a track
+  // would never appear to land on a marker.
+  assert.equal(markerToOffset(marker(48, 3, 0.9)), 45);
+});
+
+test("P4-16: dropOffset places a dropped track on the best marker", () => {
+  const ms = [marker(30, 2, 0.4), marker(48, 3, 0.9), marker(60, 5, 0.7)];
+  assert.equal(dropOffset(ms, 60), 45);
+  // Identical to what a drag would snap to, so drop and drag agree.
+  assert.equal(dropOffset(ms, 60), snapOffsetTo(45, ms, [], 128));
+});
+
+test("P4-16: with NO markers a drop overlaps the previous track's tail", () => {
+  // snapOffset would return 0 here, stacking the new track exactly on its
+  // predecessor — indistinguishable from "the snap did not happen".
+  assert.equal(snapOffset([]), 0);
+  assert.equal(dropOffset([], 60), 60 - DEFAULT_OVERLAP_S);
+  assert.equal(dropOffset(null, 90), 90 - DEFAULT_OVERLAP_S);
+});
+
+test("P4-16: the markerless fallback never goes negative on a short track", () => {
+  assert.equal(dropOffset([], 5), 0);
+  assert.equal(dropOffset([], 0), 0);
+  assert.equal(dropOffset([], undefined), 0);
 });
 
 test("P4-23: a placement away from any marker lands on the nearest beat", () => {

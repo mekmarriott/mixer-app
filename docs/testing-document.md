@@ -79,12 +79,14 @@
 
 ### Suggested song deck
 - [ ] **P4-12** List is ranked strictly descending by match score
+- [ ] **P4-12b** Tracks that cannot be mixed (ND licence, or ingestion incomplete) are omitted from the deck, not shown disabled
 - [ ] **P4-13** Each row shows both the numeric percentage AND a pie/circular fill visually matching that percentage
 - [ ] **P4-14** Each row is draggable; dropping it on the Track Window triggers the overlay/mixing state
 
 ### Overlay / multi-track mixing state
 - [ ] **P4-15** Dropped track ("Selected Track 2") renders as a distinctly colored waveform from Track 1
-- [ ] **P4-16** On drop, Track 2 auto-snaps to the highest-scoring mixing marker (per resolved design decision)
+- [ ] **P4-16** On drop, the incoming track auto-snaps to the highest-scoring mixing marker, and **visibly lands on that marker's arrow** — the arrow marks where the incoming track starts, not where the transition begins inside the outgoing one
+- [ ] **P4-16b** A pair with no candidate markers still places the incoming track sensibly (overlapping the previous track's tail), never stacked on top of it
 - [ ] **P4-17** In the shared transition zone, both waveforms render simultaneously; outside it, only the relevant single track renders
 - [ ] **P4-18** A mix accepts up to 100 tracks; the 101st is refused with a user-facing reason (raised from 2 — see `ui-requirements.md` §Overlay)
 - [ ] **P4-18b** Edits ripple rigidly: moving, inserting or deleting a track shifts every downstream track by the same amount, leaving later transitions unchanged

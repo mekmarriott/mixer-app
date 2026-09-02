@@ -45,19 +45,39 @@ def _sort_key(genre):
     return key
 
 
-def genre_groups(tracks, per_genre=None, include_unmixable=True):
+def is_usable(track):
+    """Can this track actually be put in a mix?
+
+    Two ways it cannot: an ND licence forbids the time-stretch that mixing
+    requires (so no variants are ever rendered for it), and a track that has
+    not finished ingesting has no variants yet. Both were previously listed
+    and greyed out.
+    """
+    if not track.get("mixable", True):
+        return False
+    status = track.get("status")
+    return status is None or status == "ready"
+
+
+def genre_groups(tracks, per_genre=None, include_unusable=False):
     """Group tracks by genre and take the top `per_genre` from each.
 
     Genres are ordered by size (largest first), then by name, so the opening
-    view leads with the deepest catalog. ND tracks are included by default —
-    they are playable and must still be listed with attribution; the UI marks
-    them unmixable rather than hiding them.
+    view leads with the deepest catalog.
+
+    Tracks that cannot be mixed are OMITTED, not greyed out. A disabled row is
+    a promise the app cannot keep: it costs a deck slot, invites a drag that
+    will be refused, and reads as a fault rather than a licence term. The
+    counts reported per genre are of usable tracks only, for the same reason.
+
+    Compliance is unaffected: attribution is required wherever a track is
+    played or listed, and an omitted track is neither.
     """
     per_genre = per_genre or config.DECK_TRACKS_PER_GENRE
 
     buckets = {}
     for t in tracks:
-        if not include_unmixable and not t.get("mixable", True):
+        if not include_unusable and not is_usable(t):
             continue
         buckets.setdefault(t.get("genre") or "other", []).append(t)
 

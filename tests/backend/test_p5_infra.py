@@ -298,14 +298,36 @@ class TestZeroStateSelection(unittest.TestCase):
         picked = deck.genre_groups(tracks, per_genre=3)[0]["tracks"]
         self.assertEqual(picked[0]["id"], "hot")
 
-    def test_inf_05_nd_tracks_are_listed_not_hidden(self):
-        """ND tracks are playable and must still appear with attribution; the
-        UI marks them unmixable rather than dropping them (P1-08 is about
-        variants, not visibility)."""
+    def test_inf_05_unmixable_tracks_are_hidden_not_greyed(self):
+        """A track the user cannot use does not belong in the deck at all.
+
+        An ND licence forbids the time-stretch that mixing requires, so no
+        variants are ever rendered and a drag would be refused. Showing the
+        row disabled costs a deck slot and reads as a fault rather than a
+        licence term. Compliance is unaffected: attribution is owed wherever a
+        track is played or listed, and an omitted track is neither.
+        """
         tracks = self._tracks(2, "house") + [
             {"id": "nd", "genre": "house", "mixable": False}]
+        group = deck.genre_groups(tracks, per_genre=5)[0]
+        self.assertNotIn("nd", [t["id"] for t in group["tracks"]])
+        # The count reflects what is on offer, not what was filtered away.
+        self.assertEqual(group["total"], 2)
+
+    def test_inf_05_unfinished_ingestion_is_hidden(self):
+        """A track still ingesting has no variants yet, so it cannot be mixed."""
+        tracks = [{"id": "ready", "genre": "house", "mixable": True, "status": "ready"},
+                  {"id": "midway", "genre": "house", "mixable": True,
+                   "status": "analyzed"}]
         ids = [t["id"] for t in deck.genre_groups(tracks, per_genre=5)[0]["tracks"]]
-        self.assertIn("nd", ids)
+        self.assertEqual(ids, ["ready"])
+
+    def test_inf_05_unusable_tracks_can_still_be_requested_explicitly(self):
+        """The filter is a deck-presentation choice, not a data restriction."""
+        tracks = self._tracks(1, "house") + [
+            {"id": "nd", "genre": "house", "mixable": False}]
+        group = deck.genre_groups(tracks, per_genre=5, include_unusable=True)[0]
+        self.assertIn("nd", [t["id"] for t in group["tracks"]])
 
 
 if __name__ == "__main__":

@@ -6,7 +6,7 @@
 // (arrow size = score), the beat grid, and the player cursor.
 
 import { trackGainAt } from "./crossfade.js";
-import { markerSizePx } from "./align.js";
+import { markerSizePx, markerToOffset } from "./align.js";
 import { timeToPx, pxToTime } from "./navbar.js";
 import { offsets, overlapZones, overlapsFor } from "./state.js";
 
@@ -208,7 +208,14 @@ export class Timeline {
       // track?"). Normalising across junctions would compare unlike pairs.
       const scoreSet = group.markers.map((m) => m.score);
       for (const m of group.markers) {
-        const x = timeToPx(this.vp, m.a_start_s + origin, W);
+        // Draw where the NEXT TRACK would start, not where the transition
+        // begins inside the previous one. `a_start_s` is the exit point in
+        // track A; the incoming track has to begin `b_start_s` earlier so its
+        // own entry point lands on that exit. ui-requirements.md calls these
+        // "candidate transition start points for Track 2", and both the drop
+        // snap and the drag snap already resolve to markerToOffset — only the
+        // rendering disagreed, so an arrow never sat where a track landed.
+        const x = timeToPx(this.vp, markerToOffset(m) + origin, W);
         if (x < 0 || x > W) continue;
         const size = markerSizePx(m.score, 10, 26, scoreSet) * dpr;
         ctx.fillStyle = COLORS.marker;

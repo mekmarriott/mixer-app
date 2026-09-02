@@ -322,7 +322,7 @@ async function addNextTrack(trackId) {
   const res = state.addTrack(mix, {
     id: meta.id, name: meta.name, artist: meta.artist,
     duration: wfB.duration_s, bpm: gridBpm,
-  }, align.snapOffset(currentMarkers));
+  }, align.dropOffset(currentMarkers, a.duration));
   if (!res.ok) return toast(res.reason);
 
   junctions.set(lastIndex, { markers: currentMarkers, gridBpm });

@@ -152,6 +152,7 @@ class Warmup:
                 "license_flags": {"nd": t.license_nd, "sa": t.license_sa,
                                   "nc": t.license_nc},
                 "attribution": licensing.attribution(t),
+                "status": t.status,
                 # Nothing stores popularity yet; deck.py orders by it when it
                 # appears and falls back to a deterministic shuffle until then.
                 "popularity": getattr(t, "popularity", None),
