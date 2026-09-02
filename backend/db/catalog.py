@@ -31,6 +31,26 @@ from .models import (Latency, LatencySummaryRow,               # noqa: F401
 from .queries import Queries
 
 
+
+def _region_energies_or_none(analysis, segments):
+    """`(outro, intro)` for a track, or None when they cannot be derived.
+
+    Scoring reads these two numbers instead of the blobs they come from, so
+    they are written by whichever call supplies those blobs. None rather than
+    zeros when the analysis is absent or unreadable: nothing is then written,
+    leaving any stored value intact, and matching falls back to the blobs when
+    the column is NULL. Zeros would instead be scored as real silence.
+    """
+    if not analysis or not segments:
+        return None
+    # Lazy: matching imports this module for grid_bpms_by_track.
+    from .. import matching
+    try:
+        return matching.region_energies(analysis, segments)
+    except (KeyError, IndexError, TypeError):
+        return None
+
+
 class Database:
     """Engine + query-scope factory."""
 
@@ -175,6 +195,17 @@ class Catalog:
                 fetched_at=row.get("fetched_at"),
                 analyzed_at=row.get("analyzed_at"),
                 ready_at=row.get("ready_at"))
+            # Written beside the upsert rather than through it, so adding these
+            # columns did not change upsert_track's signature and break every
+            # other caller. Only written when the blobs they are derived from
+            # are part of THIS write: ingestion upserts once after fetch (no
+            # analysis yet) and again after analysis, and the earlier call must
+            # not blank what the later one stores.
+            energies = _region_energies_or_none(row.get("analysis"),
+                                                row.get("segments"))
+            if energies:
+                q.set_track_energies(id=row["id"], outro_energy=energies[0],
+                                     intro_energy=energies[1])
             for grid_bpm, ratio, object_key, duration_s in variants:
                 q.upsert_variant(track_id=row["id"], grid_bpm=grid_bpm,
                                  ratio=ratio, object_key=object_key,

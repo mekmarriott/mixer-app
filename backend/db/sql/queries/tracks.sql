@@ -23,10 +23,11 @@ SELECT * FROM tracks WHERE mixable = :mixable ORDER BY id;
 -- columns: id TEXT, name TEXT, artist TEXT, genre TEXT, license TEXT,
 --          license_nd BOOLEAN, license_sa BOOLEAN, license_nc BOOLEAN,
 --          mixable BOOLEAN, native_bpm REAL, camelot TEXT, duration_s REAL,
---          status TEXT
+--          status TEXT, outro_energy REAL, intro_energy REAL
 SELECT id, name, artist, genre, license,
        license_nd, license_sa, license_nc,
-       mixable, native_bpm, camelot, duration_s, status
+       mixable, native_bpm, camelot, duration_s, status,
+       outro_energy, intro_energy
 FROM tracks
 ORDER BY id;
 
@@ -87,7 +88,9 @@ ON CONFLICT (id) DO UPDATE SET
 -- Clearing the cached analysis is the supported way to force a re-analysis on
 -- the next run; the upsert deliberately cannot do it, since it COALESCEs.
 -- name: ClearTrackAnalysis :exec
-UPDATE tracks SET analysis_json = NULL, segments_json = NULL WHERE id = :id;
+UPDATE tracks SET analysis_json = NULL, segments_json = NULL,
+                 outro_energy = NULL, intro_energy = NULL
+WHERE id = :id;
 
 -- name: SetTrackStatus :exec
 UPDATE tracks SET status = :status, status_error = NULL WHERE id = :id;
@@ -117,6 +120,22 @@ SELECT id, name, artist, mixable, status, status_error,
        fetched_at, analyzed_at, ready_at
 FROM tracks
 ORDER BY id;
+
+-- Backfill support. A row written before the energy columns existed, or by an
+-- analysis they could not be derived from, still has the blobs to derive them
+-- from; matching falls back to reading those blobs, which is exactly the cost
+-- the columns exist to avoid, so the gap is worth closing once.
+-- name: ListTracksMissingEnergies :many
+-- columns: id TEXT
+SELECT id FROM tracks
+WHERE analysis_json IS NOT NULL
+  AND segments_json IS NOT NULL
+  AND (outro_energy IS NULL OR intro_energy IS NULL)
+ORDER BY id;
+
+-- name: SetTrackEnergies :exec
+UPDATE tracks SET outro_energy = :outro_energy, intro_energy = :intro_energy
+WHERE id = :id;
 
 -- name: DeleteTrack :exec
 DELETE FROM tracks WHERE id = :id;

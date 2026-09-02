@@ -135,6 +135,57 @@ class TestP2Matching(unittest.TestCase):
         self.assertEqual(scores, sorted(scores, reverse=True))
 
     # --------------------------------------------------- ND interaction
+    def test_region_energies_are_stored_at_ingest(self):
+        """Scoring reads the energies off the row, so ingest must write them.
+
+        Left NULL, matching falls back to reading analysis_json and
+        segments_json per candidate — the whole-catalog blob read these
+        columns exist to avoid.
+        """
+        with self.database.reading() as q:
+            for row in q.list_track_summaries():
+                if not row.mixable:
+                    continue
+                analysis = q.get_track_analysis(id=row.id)
+                segments = q.get_track_segments(id=row.id)
+                if not analysis or not segments:
+                    continue
+                outro, intro = matching.region_energies(analysis, segments)
+                self.assertIsNotNone(row.outro_energy, row.id)
+                self.assertIsNotNone(row.intro_energy, row.id)
+                self.assertAlmostEqual(row.outro_energy, outro, places=6)
+                self.assertAlmostEqual(row.intro_energy, intro, places=6)
+
+    def test_scoring_falls_back_when_energies_are_missing(self):
+        """A row predating the columns still scores, from its blobs.
+
+        The fallback is what keeps an un-backfilled catalog correct rather
+        than merely fast, so it has to produce the same answer.
+        """
+        with self.database.reading() as q:
+            before = matching.recommend(q, "1001")
+        with self.database.writing() as q:
+            for row in q.list_track_summaries():
+                q.set_track_energies(id=row.id, outro_energy=None,
+                                     intro_energy=None)
+        try:
+            with self.database.reading() as q:
+                after = matching.recommend(q, "1001")
+            self.assertEqual([m["track_id"] for m in before],
+                             [m["track_id"] for m in after])
+            for b, a in zip(before, after):
+                self.assertAlmostEqual(b["score"], a["score"], places=6)
+        finally:
+            with self.database.writing() as q:
+                for row in q.list_track_summaries():
+                    an = q.get_track_analysis(id=row.id)
+                    sg = q.get_track_segments(id=row.id)
+                    if not an or not sg:
+                        continue
+                    o, i = matching.region_energies(an, sg)
+                    q.set_track_energies(id=row.id, outro_energy=o,
+                                         intro_energy=i)
+
     def test_nd_tracks_never_recommended(self):
         """ND (non-mixable) tracks are not candidates and get no
         recommendations themselves (requirements.md §2)."""

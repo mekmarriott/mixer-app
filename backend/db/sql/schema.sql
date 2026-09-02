@@ -38,7 +38,25 @@ CREATE TABLE IF NOT EXISTS tracks (
     source_url    TEXT,
     fetched_at    REAL,
     analyzed_at   REAL,
-    ready_at      REAL
+    ready_at      REAL,
+    -- Energy of the regions a transition actually joins: the mean of the
+    -- analysis prefix RMS over the LAST segment (what a mix fades out of) and
+    -- over the FIRST (what it fades into). Derived from analysis_json and
+    -- segments_json at ingest, and stored because scoring needs nothing else
+    -- from those blobs.
+    --
+    -- Ranking one track against the catalog previously read both blobs for
+    -- every candidate — megabytes each — to reduce them to exactly these two
+    -- numbers. As columns they ride along with the summary row that scoring
+    -- already reads, so the ranking touches no blob at all.
+    --
+    -- Appended, not inserted: rows are decoded positionally, so column order
+    -- is load-bearing and only the end of the table is safe to extend. A live
+    -- table predating these gets them from migrate(), with NULL for rows that
+    -- have not been re-ingested; matching treats NULL as "fall back to the
+    -- blobs" rather than as an energy of zero.
+    outro_energy  REAL,
+    intro_energy  REAL
 );
 
 CREATE TABLE IF NOT EXISTS variants (

@@ -37,6 +37,8 @@ class Track:
     fetched_at: float
     analyzed_at: float
     ready_at: float
+    outro_energy: float
+    intro_energy: float
 
     _FIELDS = (
         ("id", "TEXT"), ("name", "TEXT"), ("artist", "TEXT"), ("genre", "TEXT"),
@@ -45,7 +47,8 @@ class Track:
         ("camelot", "TEXT"), ("duration_s", "REAL"), ("audio_key", "TEXT"),
         ("analysis_json", "JSONDOC"), ("segments_json", "JSONDOC"), ("status", "TEXT"),
         ("status_error", "TEXT"), ("source_url", "TEXT"), ("fetched_at", "REAL"),
-        ("analyzed_at", "REAL"), ("ready_at", "REAL"),
+        ("analyzed_at", "REAL"), ("ready_at", "REAL"), ("outro_energy", "REAL"),
+        ("intro_energy", "REAL"),
     )
 
     @classmethod
@@ -194,12 +197,15 @@ class ListTrackSummariesRow:
     camelot: str
     duration_s: float
     status: str
+    outro_energy: float
+    intro_energy: float
 
     _FIELDS = (
         ("id", "TEXT"), ("name", "TEXT"), ("artist", "TEXT"), ("genre", "TEXT"),
         ("license", "TEXT"), ("license_nd", "BOOLEAN"), ("license_sa", "BOOLEAN"),
         ("license_nc", "BOOLEAN"), ("mixable", "BOOLEAN"), ("native_bpm", "REAL"),
         ("camelot", "TEXT"), ("duration_s", "REAL"), ("status", "TEXT"),
+        ("outro_energy", "REAL"), ("intro_energy", "REAL"),
     )
 
     @classmethod
@@ -234,4 +240,20 @@ class ListTrackStatusesRow:
                      for i, (_, t) in enumerate(cls._FIELDS)))
 
 
-__all__ = ["Track", "Variant", "Latency", "Mix", "MixTrack", "LatencySummaryRow", "CountMixTracksByMixRow", "ListTrackSummariesRow", "ListTrackStatusesRow"]
+@dataclasses.dataclass(frozen=True)
+class ListTracksMissingEnergiesRow:
+    """Result row of the ListTracksMissingEnergies query."""
+
+    id: str
+
+    _FIELDS = (
+        ("id", "TEXT"),
+    )
+
+    @classmethod
+    def _from_row(cls, row):
+        return cls(*(decode(row[i], t)
+                     for i, (_, t) in enumerate(cls._FIELDS)))
+
+
+__all__ = ["Track", "Variant", "Latency", "Mix", "MixTrack", "LatencySummaryRow", "CountMixTracksByMixRow", "ListTrackSummariesRow", "ListTrackStatusesRow", "ListTracksMissingEnergiesRow"]

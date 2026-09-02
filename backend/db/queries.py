@@ -57,7 +57,8 @@ ON CONFLICT (id) DO UPDATE SET
     "ListMixableTracks": """SELECT * FROM tracks WHERE mixable = :mixable ORDER BY id""",
     "ListTrackSummaries": """SELECT id, name, artist, genre, license,
        license_nd, license_sa, license_nc,
-       mixable, native_bpm, camelot, duration_s, status
+       mixable, native_bpm, camelot, duration_s, status,
+       outro_energy, intro_energy
 FROM tracks
 ORDER BY id""",
     "CountTracks": """SELECT COUNT(*) AS n FROM tracks""",
@@ -94,7 +95,9 @@ ON CONFLICT (id) DO UPDATE SET
     fetched_at    = COALESCE(EXCLUDED.fetched_at, tracks.fetched_at),
     analyzed_at   = COALESCE(EXCLUDED.analyzed_at, tracks.analyzed_at),
     ready_at      = COALESCE(EXCLUDED.ready_at, tracks.ready_at)""",
-    "ClearTrackAnalysis": """UPDATE tracks SET analysis_json = NULL, segments_json = NULL WHERE id = :id""",
+    "ClearTrackAnalysis": """UPDATE tracks SET analysis_json = NULL, segments_json = NULL,
+                 outro_energy = NULL, intro_energy = NULL
+WHERE id = :id""",
     "SetTrackStatus": """UPDATE tracks SET status = :status, status_error = NULL WHERE id = :id""",
     "MarkTrackFailed": """UPDATE tracks SET status_error = :status_error WHERE id = :id""",
     "StampTrackFetched": """UPDATE tracks SET fetched_at = :fetched_at WHERE id = :id""",
@@ -105,6 +108,13 @@ ON CONFLICT (id) DO UPDATE SET
        fetched_at, analyzed_at, ready_at
 FROM tracks
 ORDER BY id""",
+    "ListTracksMissingEnergies": """SELECT id FROM tracks
+WHERE analysis_json IS NOT NULL
+  AND segments_json IS NOT NULL
+  AND (outro_energy IS NULL OR intro_energy IS NULL)
+ORDER BY id""",
+    "SetTrackEnergies": """UPDATE tracks SET outro_energy = :outro_energy, intro_energy = :intro_energy
+WHERE id = :id""",
     "DeleteTrack": """DELETE FROM tracks WHERE id = :id""",
     "ListVariantsForTrack": """SELECT * FROM variants WHERE track_id = :track_id ORDER BY grid_bpm""",
     "ListAllVariants": """SELECT * FROM variants ORDER BY track_id, grid_bpm""",
@@ -473,6 +483,24 @@ class Queries:
         rows = cur.fetchall()
         cur.close()
         return [models.ListTrackStatusesRow._from_row(r) for r in rows]
+
+    def list_tracks_missing_energies(self):
+        """`ListTracksMissingEnergies` (:many) -> list[ListTracksMissingEnergiesRow]"""
+        params = {}
+        cur = self._execute("ListTracksMissingEnergies", params)
+        rows = cur.fetchall()
+        cur.close()
+        return [models.ListTracksMissingEnergiesRow._from_row(r) for r in rows]
+
+    def set_track_energies(self, outro_energy, intro_energy, id):
+        """`SetTrackEnergies` (:exec) -> None"""
+        params = {
+            "outro_energy": encode(outro_energy, "REAL", self._dialect),
+            "intro_energy": encode(intro_energy, "REAL", self._dialect),
+            "id": encode(id, "TEXT", self._dialect),
+        }
+        cur = self._execute("SetTrackEnergies", params)
+        cur.close()
 
     def delete_track(self, id):
         """`DeleteTrack` (:exec) -> None"""

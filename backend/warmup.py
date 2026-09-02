@@ -28,6 +28,12 @@ READY = "ready"
 FAILED = "failed"
 
 
+#: Rows given stored energies per warmup pass. Small on purpose: the pass runs
+#: on a cold start that already has a 30 second ceiling to respect, and the
+#: backlog is finite and shrinks with every start.
+ENERGY_BACKFILL_PER_RUN = 25
+
+
 class Warmup:
     def __init__(self, database, cache):
         self.database = database
@@ -82,6 +88,46 @@ class Warmup:
                       error=f"{type(exc).__name__}: {exc}",
                       message="Startup failed", finished_at=time.time())
             raise
+        # Deliberately after READY is published, and deliberately swallowing:
+        # this is catch-up work for rows that predate the energy columns, and
+        # it must not delay a boot or be able to fail one. Whatever it does not
+        # finish, the next cold start continues.
+        try:
+            self._backfill_energies()
+        except Exception:
+            pass
+
+    def _backfill_energies(self):
+        """Derive the stored energy columns for rows still missing them.
+
+        Matching falls back to reading analysis_json and segments_json when
+        these are NULL — precisely the per-candidate blob read the columns
+        exist to avoid — so an un-backfilled catalog scores at the old cost.
+        Deriving them needs no network and no re-ingest: the blobs are already
+        in the row.
+
+        Bounded per run because this shares the cold start's budget with
+        everything else. The work is idempotent and the remainder is picked up
+        by later starts, so a large catalog converges over a few of them rather
+        than putting one boot at risk.
+        """
+        from . import matching                       # lazy: see module header
+        with self.database.reading() as q:
+            pending = [r.id for r in q.list_tracks_missing_energies()]
+        pending = pending[:ENERGY_BACKFILL_PER_RUN]
+        for tid in pending:
+            with self.database.reading() as q:
+                analysis = q.get_track_analysis(id=tid)
+                segments = q.get_track_segments(id=tid)
+            if not analysis or not segments:
+                continue
+            try:
+                outro, intro = matching.region_energies(analysis, segments)
+            except (KeyError, IndexError, TypeError):
+                continue                    # re-ingestion's problem, not this
+            with self.database.writing() as q:
+                q.set_track_energies(id=tid, outro_energy=outro,
+                                     intro_energy=intro)
 
     def start_async(self, run_ingestion=True):
         t = threading.Thread(target=self.run, kwargs={"run_ingestion": run_ingestion},

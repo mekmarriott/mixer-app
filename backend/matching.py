@@ -64,16 +64,32 @@ def bpm_score(native_a, native_b, shared):
     return best_score, best
 
 
+def region_energies(analysis, segments):
+    """`(outro, intro)` mean energy for the regions a transition joins.
+
+    The outro is the last segment — what a mix fades out of — and the intro is
+    the first, what it fades into. These two numbers are all that scoring ever
+    wanted from the analysis and segment blobs, which is why they are stored on
+    the track row (schema.sql) instead of being rederived per comparison.
+    """
+    prefix = analysis["prefix"]["rms"]
+    out_seg = segments[-1]
+    in_seg = segments[0]
+    return (window_mean(prefix, out_seg["start_frame"], out_seg["end_frame"]),
+            window_mean(prefix, in_seg["start_frame"], in_seg["end_frame"]))
+
+
+def energy_score(outro_a, intro_b):
+    """How well A's outro level meets B's intro level, on 0..1."""
+    hi = max(outro_a, intro_b, 1e-9)
+    return 1.0 - min(1.0, abs(outro_a - intro_b) / hi)
+
+
 def energy_continuity(analysis_a, segments_a, analysis_b, segments_b):
     """Compare A's outro-region energy to B's intro-region energy (O(1))."""
-    pa = analysis_a["prefix"]["rms"]
-    pb = analysis_b["prefix"]["rms"]
-    out_seg = segments_a[-1]
-    in_seg = segments_b[0]
-    ea = window_mean(pa, out_seg["start_frame"], out_seg["end_frame"])
-    eb = window_mean(pb, in_seg["start_frame"], in_seg["end_frame"])
-    hi = max(ea, eb, 1e-9)
-    return 1.0 - min(1.0, abs(ea - eb) / hi)
+    ea = region_energies(analysis_a, segments_a)[0]
+    eb = region_energies(analysis_b, segments_b)[1]
+    return energy_score(ea, eb)
 
 
 def match(track_a, track_b, analysis_a, segments_a, analysis_b, segments_b,
@@ -122,25 +138,29 @@ def recommend(q, track_id, grids=None, limit=None):
         return []
     if grids is None:
         grids = grid_bpms_by_track(q)
-    an_a = a.analysis_json
-    seg_a = a.segments_json
     grid_a = grids.get(track_id, [])
     if limit is None:
         limit = config.RECOMMENDATION_LIMIT
 
-    # Pass 1 — everything that costs nothing, over summaries.
+    # A's outro is the only thing about A that scoring needs.
+    outro_a = a.outro_energy
+    if outro_a is None:
+        outro_a = region_energies(a.analysis_json, a.segments_json)[0]
+
+    # One pass over summaries, reading no blobs.
     #
-    # This used to walk `list_mixable_tracks`, which is SELECT *, so ranking
-    # one track dragged analysis_json and segments_json for the WHOLE catalog
-    # across the wire — megabytes per candidate — to compute one O(1) number
-    # each. It grew with the catalog until the request hit the 30 second
-    # function ceiling, and because a timed-out request keeps running, repeated
-    # loads saturated the instance and starved even GET /.
+    # This used to walk `list_mixable_tracks`, which is SELECT *, so ranking a
+    # single track dragged analysis_json and segments_json for the WHOLE
+    # catalog across the wire — megabytes apiece — to reduce each to one O(1)
+    # number. The cost grew with the catalog until the request hit the 30
+    # second function ceiling, and since a timed-out request keeps running,
+    # reloading multiplied the load instead of retrying it: the instance
+    # saturated and even GET / began to time out.
     #
-    # Only the energy term needs those blobs. BPM and key come from plain
-    # columns, so the whole catalog is scored on them first and the blobs are
-    # fetched one candidate at a time, below, for the few that can still place.
-    prelim = []
+    # All three score terms now come from columns that ListTrackSummaries
+    # already carries, and the BPM grid check rejects an incompatible candidate
+    # before any of them is computed.
+    out = []
     for b in q.list_track_summaries():
         if b.id == track_id or not b.mixable:
             continue                                            # P2-01
@@ -148,39 +168,40 @@ def recommend(q, track_id, grids=None, limit=None):
         shared = bpm_grid.shared_grid(grid_a, grid_b)
         if not shared:
             continue                                            # P2-01
-        s_bpm, _ = bpm_score(a.native_bpm, b.native_bpm, shared)
+        s_bpm, best_grid = bpm_score(a.native_bpm, b.native_bpm, shared)
         s_key = CAMELOT_TABLE[(a.camelot, b.camelot)]
-        base = config.WEIGHT_BPM * s_bpm + config.WEIGHT_KEY * s_key
-        # Energy is bounded by 1, so this is the best the candidate could
-        # possibly score once its blobs are read. Anything that cannot reach
-        # the cutoff even at its maximum is out without a fetch, exactly.
-        if base + config.WEIGHT_ENERGY < config.MATCH_SCORE_CUTOFF:
-            continue                                            # P2-04
-        prelim.append((base, b, grid_b))
 
-    # Best possible first, so the bound below bites as early as it can.
-    prelim.sort(key=lambda p: p[0], reverse=True)
+        intro_b = b.intro_energy
+        if intro_b is None:
+            # Pre-dates the stored columns, or was ingested from an analysis
+            # this could not read. Rare and self-healing on re-ingest, so it is
+            # worth one narrow read rather than dropping the candidate.
+            an_b = q.get_track_analysis(id=b.id)
+            seg_b = q.get_track_segments(id=b.id)
+            if not an_b or not seg_b:
+                continue
+            intro_b = region_energies(an_b, seg_b)[1]
 
-    out = []
-    for base, b, grid_b in prelim:
-        # Once `limit` candidates are settled, a candidate whose CEILING does
-        # not beat the worst of them cannot enter the result, and neither can
-        # any that follow — they are sorted by that same ceiling. Stopping here
-        # is a pruning of work, not of results: the answer is identical to
-        # scoring the entire catalog, which is why the cap still never decides
-        # *which* candidates win.
-        if limit and limit > 0 and len(out) >= limit:
-            if base + config.WEIGHT_ENERGY <= out[-1]["score"]:
-                break
-        m = match(a, b, an_a, seg_a,
-                  q.get_track_analysis(id=b.id), q.get_track_segments(id=b.id),
-                  grid_a, grid_b)
-        if m["score"] < config.MATCH_SCORE_CUTOFF:              # P2-04
+        s_energy = energy_score(outro_a, intro_b)
+        total = (config.WEIGHT_BPM * s_bpm + config.WEIGHT_KEY * s_key
+                 + config.WEIGHT_ENERGY * s_energy)
+        if total < config.MATCH_SCORE_CUTOFF:                   # P2-04
             continue
-        m["name"] = b.name
-        m["artist"] = b.artist
-        out.append(m)
-        out.sort(key=lambda m: m["score"], reverse=True)        # P2-05
-        if limit and limit > 0 and len(out) > limit:
-            out.pop()
-    return out
+        out.append({
+            "track_id": b.id,
+            "score": round(float(total), 4),
+            "breakdown": {
+                "bpm": round(float(s_bpm), 4),
+                "key": round(float(s_key), 4),
+                "energy": round(float(s_energy), 4),
+                "weights": {"bpm": config.WEIGHT_BPM, "key": config.WEIGHT_KEY,
+                            "energy": config.WEIGHT_ENERGY},
+            },
+            "shared_grid": shared,
+            "best_grid_bpm": best_grid,
+            "name": b.name,
+            "artist": b.artist,
+        })
+
+    out.sort(key=lambda m: m["score"], reverse=True)            # P2-05
+    return out[:limit] if limit and limit > 0 else out
