@@ -28,10 +28,20 @@ READY = "ready"
 FAILED = "failed"
 
 
-#: Rows given stored energies per warmup pass. Small on purpose: the pass runs
-#: on a cold start that already has a 30 second ceiling to respect, and the
-#: backlog is finite and shrinks with every start.
-ENERGY_BACKFILL_PER_RUN = 25
+#: Wall-clock budget for the energy backfill on one warmup pass.
+#:
+#: Bounded by time rather than by a row count, because the two do not track
+#: each other: the work per row is dominated by pulling that row's analysis
+#: blob, which varies with track length. A fixed count that is comfortable for
+#: a small catalog silently becomes a long pass for a large one, and a count
+#: chosen for the large case barely moves a backlog that is mostly short
+#: tracks. This pass runs after READY is published, so the budget is about not
+#: holding the instance, not about delaying anyone.
+ENERGY_BACKFILL_SECONDS = 20.0
+
+#: Hard stop regardless of the clock, so a pathological catalog cannot turn one
+#: pass into an unbounded loop.
+ENERGY_BACKFILL_MAX_ROWS = 500
 
 
 class Warmup:
@@ -106,16 +116,20 @@ class Warmup:
         Deriving them needs no network and no re-ingest: the blobs are already
         in the row.
 
-        Bounded per run because this shares the cold start's budget with
-        everything else. The work is idempotent and the remainder is picked up
-        by later starts, so a large catalog converges over a few of them rather
-        than putting one boot at risk.
+        Bounded per run because this shares the instance with everything else.
+        Each row is written as it is derived, so the work is both idempotent and
+        resumable: whatever a pass does not reach, the next one starts from,
+        and an instance torn down mid-pass loses only the row in flight.
         """
         from . import matching                       # lazy: see module header
         with self.database.reading() as q:
             pending = [r.id for r in q.list_tracks_missing_energies()]
-        pending = pending[:ENERGY_BACKFILL_PER_RUN]
+        pending = pending[:ENERGY_BACKFILL_MAX_ROWS]
+        deadline = time.time() + ENERGY_BACKFILL_SECONDS
+        done = 0
         for tid in pending:
+            if time.time() >= deadline:
+                break
             with self.database.reading() as q:
                 analysis = q.get_track_analysis(id=tid)
                 segments = q.get_track_segments(id=tid)
@@ -128,6 +142,10 @@ class Warmup:
             with self.database.writing() as q:
                 q.set_track_energies(id=tid, outro_energy=outro,
                                      intro_energy=intro)
+            done += 1
+        if pending:
+            self._set(message=f"Ready (stored energies for {done} of "
+                              f"{len(pending)} remaining tracks)")
 
     def start_async(self, run_ingestion=True):
         t = threading.Thread(target=self.run, kwargs={"run_ingestion": run_ingestion},
