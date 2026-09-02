@@ -125,22 +125,62 @@ def recommend(q, track_id, grids=None, limit=None):
     an_a = a.analysis_json
     seg_a = a.segments_json
     grid_a = grids.get(track_id, [])
+    if limit is None:
+        limit = config.RECOMMENDATION_LIMIT
+
+    # Pass 1 — everything that costs nothing, over summaries.
+    #
+    # This used to walk `list_mixable_tracks`, which is SELECT *, so ranking
+    # one track dragged analysis_json and segments_json for the WHOLE catalog
+    # across the wire — megabytes per candidate — to compute one O(1) number
+    # each. It grew with the catalog until the request hit the 30 second
+    # function ceiling, and because a timed-out request keeps running, repeated
+    # loads saturated the instance and starved even GET /.
+    #
+    # Only the energy term needs those blobs. BPM and key come from plain
+    # columns, so the whole catalog is scored on them first and the blobs are
+    # fetched one candidate at a time, below, for the few that can still place.
+    prelim = []
+    for b in q.list_track_summaries():
+        if b.id == track_id or not b.mixable:
+            continue                                            # P2-01
+        grid_b = grids.get(b.id, [])
+        shared = bpm_grid.shared_grid(grid_a, grid_b)
+        if not shared:
+            continue                                            # P2-01
+        s_bpm, _ = bpm_score(a.native_bpm, b.native_bpm, shared)
+        s_key = CAMELOT_TABLE[(a.camelot, b.camelot)]
+        base = config.WEIGHT_BPM * s_bpm + config.WEIGHT_KEY * s_key
+        # Energy is bounded by 1, so this is the best the candidate could
+        # possibly score once its blobs are read. Anything that cannot reach
+        # the cutoff even at its maximum is out without a fetch, exactly.
+        if base + config.WEIGHT_ENERGY < config.MATCH_SCORE_CUTOFF:
+            continue                                            # P2-04
+        prelim.append((base, b, grid_b))
+
+    # Best possible first, so the bound below bites as early as it can.
+    prelim.sort(key=lambda p: p[0], reverse=True)
 
     out = []
-    for b in q.list_mixable_tracks(mixable=True):
-        if b.id == track_id:
-            continue
-        grid_b = grids.get(b.id, [])
-        if not bpm_grid.shared_grid(grid_a, grid_b):
-            continue                                            # P2-01
-        m = match(a, b, an_a, seg_a, b.analysis_json, b.segments_json,
+    for base, b, grid_b in prelim:
+        # Once `limit` candidates are settled, a candidate whose CEILING does
+        # not beat the worst of them cannot enter the result, and neither can
+        # any that follow — they are sorted by that same ceiling. Stopping here
+        # is a pruning of work, not of results: the answer is identical to
+        # scoring the entire catalog, which is why the cap still never decides
+        # *which* candidates win.
+        if limit and limit > 0 and len(out) >= limit:
+            if base + config.WEIGHT_ENERGY <= out[-1]["score"]:
+                break
+        m = match(a, b, an_a, seg_a,
+                  q.get_track_analysis(id=b.id), q.get_track_segments(id=b.id),
                   grid_a, grid_b)
         if m["score"] < config.MATCH_SCORE_CUTOFF:              # P2-04
             continue
         m["name"] = b.name
         m["artist"] = b.artist
         out.append(m)
-    out.sort(key=lambda m: m["score"], reverse=True)            # P2-05
-    if limit is None:
-        limit = config.RECOMMENDATION_LIMIT
-    return out[:limit] if limit and limit > 0 else out
+        out.sort(key=lambda m: m["score"], reverse=True)        # P2-05
+        if limit and limit > 0 and len(out) > limit:
+            out.pop()
+    return out
