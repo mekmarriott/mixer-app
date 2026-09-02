@@ -37,6 +37,34 @@ function rememberMeta(meta) {
 function trackMeta(id) {
   return metaSeen.get(id) || catalog.find((c) => c.id === id) || null;
 }
+
+/**
+ * Preload audio for tracks, reporting what could not be fetched instead of
+ * rejecting.
+ *
+ * A track's geometry — waveform, duration, markers — comes from its analysis,
+ * which is stored separately from its audio. So a missing audio blob still
+ * leaves a mix that draws and edits correctly; only playback of that one track
+ * is unavailable. Rejecting here took the whole caller down with it: on boot
+ * that left the overlay up for good, reporting a client-side 404 as though the
+ * server's warmup had failed, and no reload could clear it because the same
+ * mix was resumed every time.
+ */
+async function loadAudioFor(tracks) {
+  const failed = await Promise.all(tracks.map(async (t) => {
+    try {
+      await player.load(t.id, t.bpm);
+      return null;
+    } catch {
+      return t.name || t.id;
+    }
+  }));
+  const names = failed.filter(Boolean);
+  if (names.length) {
+    toast(`Audio unavailable for ${names.join(", ")} \u2014 ${names.length === 1 ? "that track" : "those tracks"} will not play.`);
+  }
+  return names.length === 0;
+}
 let currentTransition = null;
 let gridBpm = null;
 // Markers for EVERY junction, keyed by the index of the junction's left track.
@@ -309,7 +337,7 @@ async function addFirstTrack(trackId) {
   vp.start = 0; vp.dur = vp.total;
   $("#drop-hint").classList.add("hidden");
   $("#btn-play").disabled = false;
-  await player.load(meta.id, null);
+  await loadAudioFor([mix.tracks[mix.tracks.length - 1]]);
   await renderDeckRecommendations(meta.id);
   renderAttributions();
   updateTimes();
@@ -369,7 +397,7 @@ async function addNextTrack(trackId) {
   // Follow the edit: in a long mix the new junction is usually outside the
   // current view, and a marker lane you cannot see is no use.
   revealTime(state.offsetOf(mix, meta.id));
-  await Promise.all([player.load(a.id, gridBpm), player.load(meta.id, gridBpm)]);
+  await loadAudioFor([a, mix.tracks[mix.tracks.length - 1]]);
   toast(`Snapped to best transition \u2014 ${scorePercent(currentTransition.best.score)}% ` +
         `at ${state.formatTime(state.offsetOf(mix, meta.id))} (${gridBpm} BPM grid)`);
   await renderDeckRecommendations(meta.id);   // suggestions follow the new tail
@@ -775,7 +803,7 @@ async function loadMix(id) {
     mixNodeIds.push(entry.node_id);
   }
 
-  await Promise.all(mix.tracks.map((t) => player.load(t.id, t.bpm)));
+  await loadAudioFor(mix.tracks);
 
   // Markers for EVERY junction, not just the last: a resumed mix must show the
   // same transition points it had when it was built. The curve is prefix-sum
