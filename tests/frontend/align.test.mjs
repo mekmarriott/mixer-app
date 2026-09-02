@@ -1,80 +1,126 @@
-// Alignment logic (testing-document P4-16, P4-20, P4-22..P4-24).
-import { test } from "node:test";
+// Alignment: hard beat-grid snapping and score-relative marker sizing
+// (P4-16, P4-20, P4-22, P4-23, P4-24).
+import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  bestMarker, markerToOffset, snapOffset, magneticOffset, markerSizePx,
-  MARKER_RADIUS_S, BEAT_RADIUS_S,
+  markerToOffset, bestMarker, snapOffset, snapOffsetTo, nearestBeat,
+  quantizeToBeats, beatsBetween, markerSizePx, MARKER_RADIUS_S,
 } from "../../frontend/js/align.js";
 
-const markers = [
-  { a_start_s: 49.0, b_start_s: 0.3, score: 0.81 },
-  { a_start_s: 47.0, b_start_s: 4.2, score: 0.79 },
-  { a_start_s: 30.0, b_start_s: 2.0, score: 0.55 },
-];
+const marker = (a, b, score) => ({ a_start_s: a, b_start_s: b, score });
+// 128 BPM -> a beat every 0.46875 s.
+const BPM = 128;
+const BEAT = 60 / BPM;
+const grid = Array.from({ length: 200 }, (_, i) => +(i * BEAT).toFixed(6));
 
 test("P4-16: on drop, offset snaps to the highest-scoring marker", () => {
-  assert.equal(bestMarker(markers).score, 0.81);
-  // offset places B's entry point exactly on A's exit point
-  assert.equal(snapOffset(markers), 49.0 - 0.3);
+  const ms = [marker(30, 2, 0.4), marker(48, 3, 0.9), marker(60, 5, 0.7)];
+  assert.equal(bestMarker(ms).score, 0.9);
+  assert.equal(snapOffset(ms), 45);
 });
 
-test("P4-16: snap handles empty marker list (offset 0)", () => {
+test("P4-16: snap handles an empty marker list", () => {
   assert.equal(snapOffset([]), 0);
   assert.equal(snapOffset(null), 0);
+  assert.equal(bestMarker([]), null);
 });
 
-test("markerToOffset never returns negative offsets", () => {
-  assert.equal(markerToOffset({ a_start_s: 1.0, b_start_s: 5.0, score: 0.5 }), 0);
+test("markerToOffset never returns a negative offset", () => {
+  assert.equal(markerToOffset(marker(2, 30, 0.5)), 0);
 });
 
-test("P4-22: drag far from every attractor is unchanged (free placement)", () => {
-  const proposed = 20.0; // >MARKER_RADIUS_S from every marker offset, no beats
-  assert.equal(magneticOffset(proposed, markers, []), proposed);
+test("P4-23: a placement away from any marker lands on the nearest beat", () => {
+  // 20.3s sits between beats 43 (20.156) and 44 (20.625).
+  const out = snapOffsetTo(20.3, [], grid);
+  assert.equal(out, nearestBeat(20.3, grid));
+  assert.ok(Math.abs(out - 20.156250) < 1e-6);
+  // On-grid by construction: an exact multiple of the beat.
+  assert.ok(Math.abs((out / BEAT) - Math.round(out / BEAT)) < 1e-9);
 });
 
-test("P4-23: magnetic pull engages inside the marker radius", () => {
-  const target = markerToOffset(markers[0]); // 48.7
-  const proposed = target + MARKER_RADIUS_S * 0.4;
-  const pulled = magneticOffset(proposed, markers, []);
-  // moved toward the target, but not past it
-  assert.ok(Math.abs(pulled - target) < Math.abs(proposed - target));
-  assert.ok((pulled - target) * (proposed - target) >= 0);
+test("P4-23: NO placement can leave beats misaligned", () => {
+  // Sweep the whole drag range; every result must sit on a beat.
+  for (let t = 0; t < 40; t += 0.037) {
+    const out = snapOffsetTo(t, [], grid);
+    const beats = out / BEAT;
+    assert.ok(Math.abs(beats - Math.round(beats)) < 1e-6,
+      `t=${t} resolved to ${out}, which is ${beats} beats — off grid`);
+  }
 });
 
-test("P4-23: pull is strongest at the center (full snap)", () => {
-  const target = markerToOffset(markers[0]);
-  assert.ok(Math.abs(magneticOffset(target + 0.001, markers, []) - target) < 0.001);
+test("P4-23: a marker within reach wins over the plain beat grid", () => {
+  const ms = [marker(20.0, 0, 0.9)];          // offset 20.0
+  const out = snapOffsetTo(20.3, ms, grid);   // 0.3s away, inside the radius
+  assert.equal(out, 20.0);
 });
 
-test("P4-23: beat-grid attractors engage when no marker is near", () => {
-  const beats = [10.0, 10.5, 11.0];
-  const pulled = magneticOffset(10.5 + BEAT_RADIUS_S * 0.3, [], beats);
-  assert.ok(Math.abs(pulled - 10.5) < BEAT_RADIUS_S * 0.3);
+test("P4-24: a deliberate placement is not dragged onto a distant marker", () => {
+  const ms = [marker(20.0, 0, 0.9)];
+  const proposed = 20.0 + MARKER_RADIUS_S + 0.5;   // well outside the radius
+  const out = snapOffsetTo(proposed, ms, grid);
+  assert.notEqual(out, 20.0);
+  // It goes to the nearest beat instead — never further than half a beat.
+  assert.ok(Math.abs(out - proposed) <= BEAT / 2 + 1e-9);
 });
 
-test("P4-24: pull never overrides deliberate placement outside the radius", () => {
-  const target = markerToOffset(markers[0]);
-  const proposed = target + MARKER_RADIUS_S + 0.01; // just past the edge
-  assert.equal(magneticOffset(proposed, markers, []), proposed);
+test("P4-22: placement is not restricted to markers — any beat is reachable", () => {
+  const ms = [marker(20.0, 0, 0.9)];
+  const reached = new Set();
+  for (let t = 30; t < 36; t += 0.05) reached.add(snapOffsetTo(t, ms, grid));
+  // Many distinct non-marker positions are available in a 6-second span.
+  assert.ok(reached.size > 8, `only ${reached.size} positions reachable`);
+  assert.ok(!reached.has(20.0));
 });
 
-test("P4-24: pull eases off toward the radius edge (not a hard lock)", () => {
-  const target = markerToOffset(markers[0]);
-  const nearEdge = target + MARKER_RADIUS_S * 0.95;
-  const pulled = magneticOffset(nearEdge, markers, []);
-  // Near the edge, the offset moves only slightly — placement intent respected.
-  assert.ok(Math.abs(pulled - nearEdge) < MARKER_RADIUS_S * 0.15);
-  assert.notEqual(pulled, target);
+test("quantizeToBeats makes off-grid positions unrepresentable", () => {
+  assert.ok(Math.abs(quantizeToBeats(1.0, BPM) - 2 * BEAT) < 1e-9);
+  assert.equal(quantizeToBeats(5.3, 0), 5.3);       // no bpm: unchanged
+  // Relative to an origin, so a gap between two tracks quantizes cleanly.
+  assert.ok(Math.abs(quantizeToBeats(10 + 1.0, BPM, 10) - (10 + 2 * BEAT)) < 1e-9);
 });
 
-test("P4-20: marker size is strictly increasing with score and bounded", () => {
-  const sizes = [0, 0.25, 0.5, 0.75, 1].map((s) => markerSizePx(s));
-  for (let i = 1; i < sizes.length; i++) assert.ok(sizes[i] > sizes[i - 1]);
-  assert.equal(markerSizePx(0), 10);
-  assert.equal(markerSizePx(1), 26);
-  assert.equal(markerSizePx(2), 26);   // clamped
-  // Proportionality: equal score steps produce equal size steps.
-  const d1 = markerSizePx(0.5) - markerSizePx(0.25);
-  const d2 = markerSizePx(0.75) - markerSizePx(0.5);
-  assert.ok(Math.abs(d1 - d2) < 1e-9);
+test("beatsBetween converts a gap to whole beats", () => {
+  assert.equal(beatsBetween(4 * BEAT, BPM), 4);
+  assert.equal(beatsBetween(4 * BEAT + 0.01, BPM), 4);
+  assert.equal(beatsBetween(0, BPM), 0);
+  assert.equal(beatsBetween(5, 0), 0);
+});
+
+test("snapOffsetTo falls back to bpm quantization with no explicit grid", () => {
+  const out = snapOffsetTo(1.0, [], null, BPM);
+  assert.ok(Math.abs(out - 2 * BEAT) < 1e-9);
+});
+
+test("P4-20: marker size is scaled RELATIVE to the candidates on screen", () => {
+  // A real measured pair: five markers spanning 0.781..0.805.
+  const scores = [0.8054, 0.7886, 0.7884, 0.7841, 0.7811];
+  const sizes = scores.map((s) => markerSizePx(s, 10, 26, scores));
+
+  // On an absolute 0..1 scale these differ by 0.4px — visually identical.
+  const absolute = scores.map((s) => markerSizePx(s, 10, 26));
+  assert.ok(Math.max(...absolute) - Math.min(...absolute) < 1,
+    "absolute scaling should collapse this band (that is the bug)");
+
+  // Relative scaling spans the full range, so the ranking is legible.
+  assert.equal(Math.min(...sizes), 10);
+  assert.equal(Math.max(...sizes), 26);
+  // Order is preserved: better score, bigger arrow.
+  const byScore = [...scores].sort((a, b) => a - b);
+  const bySize = byScore.map((s) => markerSizePx(s, 10, 26, scores));
+  for (let i = 1; i < bySize.length; i++) assert.ok(bySize[i] >= bySize[i - 1]);
+});
+
+test("P4-20: all-equal scores render uniformly rather than dividing by zero", () => {
+  const scores = [0.5, 0.5, 0.5];
+  const sizes = scores.map((s) => markerSizePx(s, 10, 26, scores));
+  assert.ok(sizes.every(Number.isFinite));
+  assert.deepEqual(sizes, [18, 18, 18]);
+});
+
+test("P4-20: size is bounded and clamps out-of-range scores", () => {
+  const scores = [0, 1];
+  assert.equal(markerSizePx(-1, 10, 26, scores), 10);
+  assert.equal(markerSizePx(2, 10, 26, scores), 26);
+  // A single marker has nothing to compare against: absolute scale.
+  assert.equal(markerSizePx(0.5, 10, 26, [0.5]), 18);
 });

@@ -1,12 +1,23 @@
 // Web Audio playback engine (P4-01, P4-02, P4-25).
 //
-// Both tracks are pre-rendered variants at the SAME grid BPM — no live
+// Every track is a pre-rendered variant at the SAME grid BPM — no live
 // time-stretch happens here (project plan Phase 4). The crossfade schedules
 // gain values sampled from crossfade.js, the same module the timeline uses
 // to draw the fade, so sight and sound cannot drift apart.
+//
+// A mix is a chain: each track fades in across the overlap with its
+// predecessor and out across the overlap with its successor, so an interior
+// track carries a composed envelope and at most two tracks ever sound at once.
 
-import { gainCurve } from "./crossfade.js";
+import { gainCurve, trackGainAt } from "./crossfade.js";
+import { offsets, overlapsFor } from "./state.js";
 import { api } from "./api.js";
+
+// A few-hour mix must not schedule hundreds of buffers at once, and a browser
+// will not hold them in memory anyway. Only tracks that sound within this
+// horizon of the play position are scheduled; `refresh()` extends it as
+// playback advances.
+const SCHEDULE_HORIZON_S = 90;
 
 export class Player {
   constructor() {
@@ -16,6 +27,8 @@ export class Player {
     this.playing = false;
     this.startedAt = 0;   // ctx.currentTime when playback started
     this.startPos = 0;    // mix-time position where playback started
+    this.scheduled = new Set();   // chain indices already handed to WebAudio
+    this.scheduledThrough = 0;
   }
 
   _ensureCtx() {
@@ -34,49 +47,91 @@ export class Player {
     return buf;
   }
 
-  // mix: state.js mix object; overlap: {start,end}|null; pos: mix-time seconds
-  play(mix, overlap, pos = 0) {
+  // mix: state.js mix object; pos: mix-time seconds.
+  //
+  // Every track in the chain is scheduled with its OWN composed gain envelope:
+  // an interior track fades in across the overlap with its predecessor and out
+  // across the overlap with its successor. Sampling the composed curve (rather
+  // than scheduling each zone separately) is what keeps a short track that is
+  // fading in and out at once correct.
+  play(mix, pos = 0) {
     const ctx = this._ensureCtx();
     if (ctx.state === "suspended") ctx.resume();
     this.stop();
     const t0 = ctx.currentTime + 0.05;
+    this.playing = true;
+    this.startedAt = t0;
+    this.startPos = pos;
+    this.scheduled = new Set();
+    this.scheduledThrough = pos;
+    this._extend(mix, pos + SCHEDULE_HORIZON_S);
+  }
+
+  /**
+   * Schedule every not-yet-scheduled track that begins before `through`.
+   *
+   * Additive on purpose: already-playing sources are never stopped and
+   * restarted, because re-scheduling from scratch mid-playback would put an
+   * audible seam in the mix every time the horizon advanced.
+   */
+  _extend(mix, through) {
+    const ctx = this.ctx;
+    const offs = offsets(mix);
+    const pos = this.startPos;
 
     mix.tracks.forEach((track, idx) => {
+      if (this.scheduled.has(idx)) return;
+      const start = offs[idx];
+      const end = start + track.duration;
+      if (end <= pos || start > through) return;
+
       const key = `${track.id}|${track.bpm ?? "native"}`;
       const buf = this.buffers.get(key);
-      if (!buf) return;
-      const role = idx === 0 ? "out" : "in";
+      if (!buf) return;                       // not loaded yet; a later pass takes it
+
+      const offsetInto = Math.max(0, pos - start);
+      if (offsetInto >= buf.duration) return;
+
       const src = ctx.createBufferSource();
       src.buffer = buf;
       const gain = ctx.createGain();
       src.connect(gain).connect(ctx.destination);
 
-      const trackStart = track.offset - pos; // seconds from now until track starts
-      const offsetInto = Math.max(0, pos - track.offset);
-      if (offsetInto >= buf.duration) return;
+      const overlaps = overlapsFor(mix, idx);
+      const from = Math.max(start, pos);
+      const when = this.startedAt + (from - pos);
 
-      // Base gain 1, crossfade over the overlap zone (if any).
-      gain.gain.setValueAtTime(role === "in" && overlap && pos < overlap.start ? 0 : 1, t0);
-      if (overlap && overlap.end > pos) {
-        const fadeStart = Math.max(overlap.start, pos);
-        const curve = gainCurve(fadeStart, overlap.end, role, 128);
-        const when = t0 + Math.max(0, fadeStart - pos);
-        gain.gain.setValueAtTime(curve[0], when);
+      gain.gain.setValueAtTime(trackGainAt(from, overlaps), when);
+      if (end > from) {
+        const curve = gainCurve(from, end, overlaps, 256);
         try {
-          gain.gain.setValueCurveAtTime(new Float32Array(curve), when, overlap.end - fadeStart);
+          gain.gain.setValueCurveAtTime(new Float32Array(curve), when, end - from);
         } catch {
           curve.forEach((v, i) =>
-            gain.gain.linearRampToValueAtTime(v, when + ((overlap.end - fadeStart) * i) / (curve.length - 1)));
+            gain.gain.linearRampToValueAtTime(v, when + ((end - from) * i) / (curve.length - 1)));
         }
       }
-      if (trackStart > 0) src.start(t0 + trackStart, 0);
-      else src.start(t0, offsetInto);
+
+      if (start > pos) src.start(this.startedAt + (start - pos), 0);
+      else src.start(this.startedAt, offsetInto);
       this.sources.push(src);
+      this.scheduled.add(idx);
     });
 
-    this.playing = true;
-    this.startedAt = t0;
-    this.startPos = pos;
+    this.scheduledThrough = Math.max(this.scheduledThrough, through);
+  }
+
+  /**
+   * Extend the scheduling horizon as the play head advances. Called from the
+   * animation loop; a no-op until the head is within half a horizon of the end
+   * of what is already scheduled. Adds sources without disturbing playing ones.
+   */
+  refresh(mix) {
+    if (!this.playing) return false;
+    const pos = this.position();
+    if (pos < this.scheduledThrough - SCHEDULE_HORIZON_S / 2) return false;
+    this._extend(mix, pos + SCHEDULE_HORIZON_S);
+    return true;
   }
 
   position() {
@@ -87,15 +142,16 @@ export class Player {
   stop() {
     this.sources.forEach((s) => { try { s.stop(); } catch { /* already stopped */ } });
     this.sources = [];
+    this.scheduled = new Set();
     const pos = this.playing ? this.position() : this.startPos;
     this.playing = false;
     this.startPos = pos;
   }
 
-  seek(mix, overlap, pos) {
+  seek(mix, pos) {
     const wasPlaying = this.playing;
     this.stop();
     this.startPos = pos;
-    if (wasPlaying) this.play(mix, overlap, pos);
+    if (wasPlaying) this.play(mix, pos);
   }
 }

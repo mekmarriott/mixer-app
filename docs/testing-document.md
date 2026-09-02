@@ -82,21 +82,22 @@
 - [ ] **P4-13** Each row shows both the numeric percentage AND a pie/circular fill visually matching that percentage
 - [ ] **P4-14** Each row is draggable; dropping it on the Track Window triggers the overlay/mixing state
 
-### Overlay / two-track mixing state
+### Overlay / multi-track mixing state
 - [ ] **P4-15** Dropped track ("Selected Track 2") renders as a distinctly colored waveform from Track 1
 - [ ] **P4-16** On drop, Track 2 auto-snaps to the highest-scoring mixing marker (per resolved design decision)
 - [ ] **P4-17** In the shared transition zone, both waveforms render simultaneously; outside it, only the relevant single track renders
-- [ ] **P4-18** A third track cannot be added to the Track Window — verify the UI prevents or disables a third drop target (max 2 for v1, per resolved design decision)
+- [ ] **P4-18** A mix accepts up to 100 tracks; the 101st is refused with a user-facing reason (raised from 2 — see `ui-requirements.md` §Overlay)
+- [ ] **P4-18b** Edits ripple rigidly: moving, inserting or deleting a track shifts every downstream track by the same amount, leaving later transitions unchanged
 - [ ] **P4-19** After the initial snap, overlap boundaries remain adjustable via drag
 
 ### Mixing markers
-- [ ] **P4-20** Marker size scales proportionally with the transition-window score at that point (verify against the Phase 3 scored curve, not a fixed size)
+- [ ] **P4-20** Marker size scales with the transition-window score, **relative to the candidate set on screen**, so differences within one pair's narrow score band remain visible
 - [ ] **P4-21** Multiple markers render simultaneously when multiple viable candidates exist for a given track pair
 
 ### Free-drag alignment
-- [ ] **P4-22** Track 2 can be dragged to an arbitrary (non-marked) point — placement is not hard-locked to markers only
-- [ ] **P4-23** A magnetic "pull" engages near markers and beat-grid positions during drag (snapping within the pull radius, free movement outside it) — per resolved design decision
-- [ ] **P4-24** Pull strength/radius does not fully override deliberate manual placement away from any marker
+- [ ] **P4-22** A track can be dragged to an arbitrary (non-marked) point — placement is not hard-locked to markers only
+- [ ] **P4-23** Every placement lands on the beat grid: a marker within reach wins, otherwise the nearest beat. No drag can leave beats misaligned
+- [ ] **P4-24** Beat snapping does not drag a deliberate placement onto a distant marker — only the nearest beat
 
 ### Cross-fade visualization
 - [ ] **P4-25** The waveform/volume visual in the overlap region reflects the actual live gain-automation curve driving playback — not a static decorative blend

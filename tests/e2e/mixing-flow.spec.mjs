@@ -4,7 +4,8 @@
 import { test, expect } from "@playwright/test";
 import {
   bootApp, addFirstTrack, addSecondTrack, dragRowToTimeline,
-  sampleTimeline, sampleTimelineWhenDrawn, countMarkerClusters, DRAGGABLE_ROW, COLORS,
+  sampleTimeline, sampleTimelineWhenDrawn, countMarkerClusters, DRAGGABLE_ROW,
+  COLORS, readClock,
 } from "./helpers.mjs";
 
 test.describe("deck and two-track mixing state", () => {
@@ -64,19 +65,40 @@ test.describe("deck and two-track mixing state", () => {
     expect(arrows).toBeLessThanOrEqual(5);
   });
 
-  test("P4-18 a third track cannot be added", async ({ page }) => {
+  test("P4-18 a mix chains well past the old two-track cap", async ({ page }) => {
     await bootApp(page);
     await addFirstTrack(page);
     await addSecondTrack(page);
 
-    // The UI gates first: no row offers itself for dragging any more.
-    await expect(page.locator(DRAGGABLE_ROW)).toHaveCount(0);
+    // The v1 limit of two was lifted (ui-requirements.md §Overlay): keep
+    // adding while the deck still offers a compatible track.
+    let added = 2;
+    while (added < 6 && await page.locator(DRAGGABLE_ROW).count()) {
+      await dragRowToTimeline(page, page.locator(DRAGGABLE_ROW).first());
+      added++;
+      await expect(page.locator("#attributions span")).toHaveCount(added);
+    }
 
-    // And the state layer refuses even if a drop is forced past the gate.
-    const totalBefore = await page.locator("#time-total").innerText();
-    await dragRowToTimeline(page, page.locator("#deck .deck-row").first());
-    await expect(page.locator("#attributions span")).toHaveCount(2);
-    await expect(page.locator("#time-total")).toHaveText(totalBefore);
+    expect(added, "expected the chain to grow beyond two tracks").toBeGreaterThan(2);
+    // Every track in the chain is attributed, not just the first two.
+    await expect(page.locator("#attributions span")).toHaveCount(added);
+  });
+
+  test("P4-18b adding a track ripples the mix longer, never shorter", async ({ page }) => {
+    await bootApp(page);
+    await addFirstTrack(page);
+    const oneTrack = await readClock(page, "#time-total");
+
+    await addSecondTrack(page);
+    const twoTracks = await readClock(page, "#time-total");
+    expect(twoTracks).toBeGreaterThan(oneTrack);
+
+    if (await page.locator(DRAGGABLE_ROW).count()) {
+      await dragRowToTimeline(page, page.locator(DRAGGABLE_ROW).first());
+      await expect(page.locator("#attributions span")).toHaveCount(3);
+      // The third track appends to the tail; it cannot shorten the mix.
+      await expect.poll(() => readClock(page, "#time-total")).toBeGreaterThan(twoTracks);
+    }
   });
 
   test("P4-27 attribution is displayed for track 2 once added", async ({ page }) => {

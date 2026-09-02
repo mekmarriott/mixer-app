@@ -18,8 +18,8 @@ grep -rhoE "P[1-4]-[0-9]{2}" tests/ | sort -u
 | Suite | Runner | Count | Runs in | What it is for |
 |---|---|---|---|---|
 | **Backend** | `unittest` (stdlib) | 84 | ~8 s | Pipeline, compliance gates, API contract, startup precompute and DB concurrency. Builds a real 5-track fixture catalog through one full ingestion. |
-| **Frontend logic** | `node:test` (stdlib) | 50 | <1 s | The pure interaction modules (`state`, `align`, `crossfade`, `navbar`, `deck`, `attribution`, `boot`) — no DOM, no WebAudio. |
-| **Browser** | Playwright + Chromium | 18 | ~23 s | What the other two structurally cannot reach: native drag-and-drop, canvas pixels, the WebAudio clock, and real network behaviour. |
+| **Frontend logic** | `node:test` (stdlib) | 66 | <1 s | The pure interaction modules (`state`, `align`, `crossfade`, `navbar`, `deck`, `attribution`, `boot`) — no DOM, no WebAudio. |
+| **Browser** | Playwright + Chromium | 19 | ~25 s | What the other two structurally cannot reach: native drag-and-drop, canvas pixels, the WebAudio clock, and real network behaviour. |
 | **Manual** | a human with ears | 1 | — | Perceptual judgement only. |
 
 ```bash
@@ -112,15 +112,16 @@ manual sign-off list in `design-document.md` §12 before Playwright existed.
 | **P4-14** | **Rows draggable; drop enters mixing state** | **Browser** | `P4-14 deck rows are draggable and dropping one enters the mixing state` |
 | **P4-15** | **Track 2 renders in a distinct colour** | **Browser** | `P4-15 track 2 renders in a colour distinct from track 1` |
 | P4-16 | Drop auto-snaps to the best marker | Logic | `P4-16: on drop, offset snaps to the highest-scoring marker`, `…empty marker list…` |
-| P4-17 | Both waveforms render only in the shared zone | Logic | `P4-17: overlap zone exists only where both tracks are present`, `…no overlap zone when…` |
-| P4-18 | No third track | Logic + **Browser** | `P4-18: a third track cannot be added (max 2…)` · `P4-18 a third track cannot be added` |
+| P4-17 | Overlaps exist only between neighbours in the chain | Logic | `P4-17: overlaps exist only between neighbours`, `P4-17: no overlap when a track starts after its predecessor ends` |
+| P4-18 | Up to 100 tracks; the 101st is refused with a reason | Logic + **Browser** | `P4-18: a mix accepts up to 100 tracks`, `P4-18: a long mix spans hours…` · `P4-18 a mix chains well past the old two-track cap` |
+| P4-18b | Edits ripple rigidly, preserving downstream transitions | Logic + **Browser** | `P4-18b: moving a track ripples the whole tail rigidly`, `…preserves every downstream transition unchanged`, `…inserting in the middle…`, `…deleting in the middle…`, `…can close a transition entirely…` · `P4-18b adding a track ripples the mix longer, never shorter` |
 | P4-19 | Overlap adjustable after the snap | Logic | `P4-19: overlap boundaries adjust when track 2 is dragged` |
-| P4-20 | Marker size scales with score | Logic | `P4-20: marker size is strictly increasing with score and bounded` |
+| P4-20 | Marker size scales with score, relative to the on-screen set | Logic | `P4-20: marker size is scaled RELATIVE to the candidates on screen`, `…all-equal scores render uniformly…`, `…size is bounded and clamps out-of-range scores` |
 | **P4-21** | **Multiple markers render simultaneously** | **Browser** | `P4-21 multiple transition markers render simultaneously` |
 | P4-22 | Free placement away from markers | Logic | `P4-22: drag far from every attractor is unchanged (free placement)` |
-| P4-23 | Magnetic pull near markers and beats | Logic | `P4-23: magnetic pull engages inside the marker radius`, `…strongest at the center…`, `…beat-grid attractors…` |
-| P4-24 | Pull never overrides deliberate placement | Logic | `P4-24: pull never overrides deliberate placement outside the radius`, `…eases off toward the radius edge…` |
-| P4-25 | Drawn fade **is** the audible gain curve | Logic | `P4-25: outside the overlap, each track plays/draws at full gain`, `P4-25: inside the overlap, drawn gain follows the same curve` |
+| P4-23 | Every placement lands on the beat grid | Logic | `P4-23: a placement away from any marker lands on the nearest beat`, `P4-23: NO placement can leave beats misaligned`, `P4-23: a marker within reach wins over the plain beat grid` |
+| P4-24 | Snapping never drags a placement onto a distant marker | Logic | `P4-24: a deliberate placement is not dragged onto a distant marker` |
+| P4-25 | Drawn fade **is** the audible gain curve, across the chain | Logic | `P4-25: outside every zone a track plays and draws at full gain`, `P4-25: an INTERIOR track fades in, holds, then fades out`, `P4-25: a chain keeps constant power at every junction`, `P4-25: touching zones compose as a product rather than clipping` |
 | P4-26 | Attribution for the selected track | Backend + Logic | `test_p4_26_27_attribution_for_all_tracks` · `P4-26: attribution line contains title, artist, and license name` |
 | **P4-27** | **Attribution for track 2 once added** | Backend + **Browser** | `test_p4_26_27_attribution_for_all_tracks` · `P4-27 attribution is displayed for track 2 once added` |
 | P4-28 | Attribution matches the stored CC variant | Backend + Logic | `test_p4_28_attribution_matches_stored_variant` · `P4-28: attribution reflects the stored CC variant across BY / BY-NC / BY-SA` |

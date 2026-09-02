@@ -23,38 +23,97 @@ export function snapOffset(markers) {
   return m ? markerToOffset(m) : 0;
 }
 
-// Magnetic pull (P4-23): given a proposed offset (from a drag), pull it
-// toward nearby attractors. Marker attractors have a wider radius and a
-// stronger pull than beat attractors; outside every radius the offset is
-// unchanged (free drag, P4-22).
+// Beat-grid quantization — a HARD constraint, not a preference.
+//
+// Previously this was a magnetic *pull*: strong near an attractor, absent
+// elsewhere, so a track could come to rest between beats and play out of time.
+// Beats now cannot be misaligned, because an unaligned position is not
+// representable: every placement is quantized to the grid before it is stored.
+//
+// Markers still win over plain beats when one is in reach, so the
+// highest-scoring transitions remain easy to hit — but the fallback is the
+// nearest beat rather than wherever the pointer happened to stop.
 export const MARKER_RADIUS_S = 1.25;
-export const BEAT_RADIUS_S = 0.18;
 
-export function magneticOffset(proposed, markers, beatGrid) {
-  let best = { dist: Infinity, target: proposed, radius: 0 };
+/** Nearest value in a sorted-or-unsorted grid. Returns `t` if the grid is empty. */
+export function nearestBeat(t, beatGrid) {
+  if (!beatGrid || !beatGrid.length) return t;
+  let best = beatGrid[0];
+  let bestD = Math.abs(t - best);
+  for (const b of beatGrid) {
+    const d = Math.abs(t - b);
+    if (d < bestD) { best = b; bestD = d; }
+  }
+  return best;
+}
+
+/**
+ * Quantize to a whole number of beats at `bpm`, measured from `origin`.
+ *
+ * Used when no explicit grid is available (e.g. the gap between two tracks
+ * already on a shared BPM grid). Integer beats make misalignment
+ * unrepresentable rather than merely unlikely — the same reason the persisted
+ * schema stores `delta_beats` as an integer.
+ */
+export function quantizeToBeats(t, bpm, origin = 0) {
+  if (!bpm || bpm <= 0) return t;
+  const beat = 60 / bpm;
+  return origin + Math.round((t - origin) / beat) * beat;
+}
+
+export function beatsBetween(seconds, bpm) {
+  if (!bpm || bpm <= 0) return 0;
+  return Math.round(seconds / (60 / bpm));
+}
+
+/**
+ * Resolve a dragged position to a legal one.
+ *
+ * A marker inside MARKER_RADIUS_S wins outright (they are already beat-aligned
+ * by construction — transitions.py snaps window starts to downbeats). Anything
+ * else lands on the nearest beat. There is no free placement: the return value
+ * is always on the grid.
+ */
+export function snapOffsetTo(proposed, markers, beatGrid, bpm = null) {
+  let bestMarkerTarget = null;
+  let bestMarkerDist = Infinity;
   for (const m of markers || []) {
     const target = markerToOffset(m);
     const d = Math.abs(proposed - target);
-    if (d <= MARKER_RADIUS_S && d < best.dist) {
-      best = { dist: d, target, radius: MARKER_RADIUS_S };
+    if (d <= MARKER_RADIUS_S && d < bestMarkerDist) {
+      bestMarkerDist = d;
+      bestMarkerTarget = target;
     }
   }
-  if (best.dist === Infinity) {
-    for (const bt of beatGrid || []) {
-      const d = Math.abs(proposed - bt);
-      if (d <= BEAT_RADIUS_S && d < best.dist) {
-        best = { dist: d, target: bt, radius: BEAT_RADIUS_S };
-      }
-    }
-  }
-  if (best.dist === Infinity) return proposed;
-  // Smooth pull: full snap at the center, easing off toward the radius edge.
-  const strength = 1 - (best.dist / best.radius) ** 2;
-  return proposed + (best.target - proposed) * strength;
+  if (bestMarkerTarget !== null) return Math.max(0, bestMarkerTarget);
+
+  if (beatGrid && beatGrid.length) return Math.max(0, nearestBeat(proposed, beatGrid));
+  return Math.max(0, quantizeToBeats(proposed, bpm));
 }
 
-// Marker arrow sizing (P4-21): px height proportional to score.
-export function markerSizePx(score, minPx = 10, maxPx = 26) {
+// Marker arrow sizing (P4-20): height encodes how good that transition is.
+//
+// Scoring the SAME pair produces a narrow band — a real pair measured
+// 0.781..0.805, a spread of 0.024. Mapped through an absolute 0..1 scale that
+// is 22.5px..22.9px: every arrow the same size, and the one thing the marker
+// lane exists to communicate invisible.
+//
+// So the scale is RELATIVE to the set being drawn: the weakest candidate on
+// offer sits at minPx, the strongest at maxPx, and the rest spread between.
+// The comparison a user actually makes is "which of these is best?", and that
+// is what this makes legible. Absolute score stays available on hover.
+export function markerSizePx(score, minPx = 10, maxPx = 26, scores = null) {
   const s = Math.max(0, Math.min(1, score));
-  return minPx + (maxPx - minPx) * s;
+  if (!scores || scores.length < 2) return minPx + (maxPx - minPx) * s;
+
+  let lo = Infinity, hi = -Infinity;
+  for (const v of scores) {
+    const c = Math.max(0, Math.min(1, v));
+    if (c < lo) lo = c;
+    if (c > hi) hi = c;
+  }
+  // All-equal scores: no ordering to convey, so show them uniformly at the
+  // midpoint rather than dividing by zero or implying a ranking.
+  if (hi - lo < 1e-9) return (minPx + maxPx) / 2;
+  return minPx + (maxPx - minPx) * ((s - lo) / (hi - lo));
 }

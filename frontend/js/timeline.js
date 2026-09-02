@@ -8,7 +8,7 @@
 import { trackGainAt } from "./crossfade.js";
 import { markerSizePx } from "./align.js";
 import { timeToPx, pxToTime } from "./navbar.js";
-import { overlapZone } from "./state.js";
+import { offsets, overlapZones, overlapsFor } from "./state.js";
 
 export const COLORS = {
   track1: "#ff4fa3",
@@ -21,6 +21,19 @@ export const COLORS = {
 };
 
 const MARKER_LANE_H = 30;
+
+// A 100-track mix needs more than the two mandated hues. Magenta and blue stay
+// first and second (ui-requirements mandates them for tracks 1 and 2); the rest
+// continue around the wheel, skipping gold, which is reserved for markers.
+export const TRACK_COLORS = [
+  "#ff4fa3", "#4fa8ff", "#5ee6a8", "#c98bff", "#ff8f5e", "#4fd6e6",
+  "#e6d24f", "#8b9bff", "#ff6fd8", "#7ee65e",
+];
+
+/** Colour for the nth track in the chain. Adjacent tracks never share one. */
+export function trackColor(index) {
+  return TRACK_COLORS[index % TRACK_COLORS.length];
+}
 
 export class Timeline {
   constructor(canvas, vp) {
@@ -36,7 +49,7 @@ export class Timeline {
 
   setMix(mix) { this.mix = mix; }
   setWaveform(id, wf) { this.waveforms.set(id, wf); }
-  setMarkers(m) { this.markers = m || []; }
+  setMarkers(m, origin = null) { this.markers = m || []; this.markerOrigin = origin; }
   setCursor(t) { this.cursor = t; }
 
   resize() {
@@ -54,13 +67,14 @@ export class Timeline {
     const laneH = MARKER_LANE_H * dpr;
     const waveTop = laneH;
     const waveH = H - laneH;
-    const overlap = overlapZone(this.mix);
+    const offs = offsets(this.mix);
+    const zones = overlapZones(this.mix);
 
     // Beat grid of track 1 (mix reference grid), P4-24 visual aid.
     const ref = this.mix.tracks[0] && this.waveforms.get(this.mix.tracks[0].id);
     if (ref?.beat_grid) {
       ref.beat_grid.forEach((bt, i) => {
-        const t = bt + this.mix.tracks[0].offset;
+        const t = bt + (offs[0] ?? 0);
         const x = timeToPx(this.vp, t, W);
         if (x < 0 || x > W) return;
         ctx.strokeStyle = i % 4 === 0 ? COLORS.downbeat : COLORS.beat;
@@ -69,11 +83,12 @@ export class Timeline {
       });
     }
 
-    // Overlap zone shading.
-    if (overlap) {
-      const x0 = timeToPx(this.vp, overlap.start, W);
-      const x1 = timeToPx(this.vp, overlap.end, W);
-      ctx.fillStyle = COLORS.overlay;
+    // Every transition zone in the chain gets its shading.
+    ctx.fillStyle = COLORS.overlay;
+    for (const z of zones) {
+      const x0 = timeToPx(this.vp, z.start, W);
+      const x1 = timeToPx(this.vp, z.end, W);
+      if (x1 < 0 || x0 > W) continue;
       ctx.fillRect(x0, waveTop, x1 - x0, waveH);
     }
 
@@ -82,8 +97,12 @@ export class Timeline {
     this.mix.tracks.forEach((track, idx) => {
       const wf = this.waveforms.get(track.id);
       if (!wf) return;
-      const color = idx === 0 ? COLORS.track1 : COLORS.track2;
-      const role = idx === 0 ? "out" : "in";
+      const start = offs[idx];
+      // Skip tracks entirely outside the viewport — a 100-track mix draws only
+      // what is on screen.
+      if (start > this.vp.start + this.vp.dur || start + track.duration < this.vp.start) return;
+      const color = trackColor(idx);
+      const overlaps = overlapsFor(this.mix, idx);
       const mid = waveTop + waveH / 2;
       const amp = waveH * 0.46;
       ctx.fillStyle = color;
@@ -91,11 +110,11 @@ export class Timeline {
       const n = wf.points.length;
       for (let i = 0; i < n; i++) {
         const tLocal = (i / (n - 1)) * wf.duration_s;
-        const t = tLocal + track.offset;
+        const t = tLocal + start;
         const x = timeToPx(this.vp, t, W);
         if (x < -4 || x > W + 4) continue;
         // Amplitude scaled by the real crossfade gain — truthful fade (P4-25).
-        const g = trackGainAt(t, overlap, role);
+        const g = trackGainAt(t, overlaps);
         const h = Math.max(1, wf.points[i] * amp * g);
         const barW = Math.max(1, (W / this.vp.dur) * (wf.duration_s / n) * 0.7);
         ctx.fillRect(x, mid - h, barW, h * 2);
@@ -107,12 +126,15 @@ export class Timeline {
     ctx.strokeStyle = "rgba(255,194,75,0.25)";
     ctx.lineWidth = 1 * dpr;
     ctx.beginPath(); ctx.moveTo(0, laneH - 0.5 * dpr); ctx.lineTo(W, laneH - 0.5 * dpr); ctx.stroke();
-    const aOffset = this.mix.tracks[0]?.offset ?? 0;
+    const aOffset = this.markerOrigin ?? offs[0] ?? 0;
+    // Size relative to the candidates actually on offer: scores for one pair
+    // cluster in a narrow band, so an absolute scale renders them identical.
+    const scoreSet = this.markers.map((m) => m.score);
     for (const m of this.markers) {
       const t = m.a_start_s + aOffset;
       const x = timeToPx(this.vp, t, W);
       if (x < 0 || x > W) continue;
-      const size = markerSizePx(m.score) * dpr;
+      const size = markerSizePx(m.score, 10, 26, scoreSet) * dpr;
       ctx.fillStyle = COLORS.marker;
       ctx.globalAlpha = m === this.hoverMarker ? 1 : 0.85;
       ctx.beginPath();
@@ -142,10 +164,10 @@ export class Timeline {
   trackAtPoint(px, py) {
     if (!this.mix) return null;
     const t = this.pxToTimeLocal(px);
-    // Prefer track 2 (draggable) when both overlap under the pointer.
+    const offs = offsets(this.mix);
+    // Later track wins where two overlap: in a chain the newer one sits on top.
     for (let i = this.mix.tracks.length - 1; i >= 0; i--) {
-      const tr = this.mix.tracks[i];
-      if (t >= tr.offset && t <= tr.offset + tr.duration) return tr;
+      if (t >= offs[i] && t <= offs[i] + this.mix.tracks[i].duration) return i;
     }
     return null;
   }
