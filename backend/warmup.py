@@ -254,6 +254,12 @@ class Warmup:
         cold start — 16 seconds for 72 tracks on Vercel, against a 30 second
         function limit, before the first request could be answered.
 
+        Warming the deck's envelopes was the last of that to go. Once the
+        arrays moved to the object store it became a round trip per deck
+        track, made before the app could answer anything, which is a worse
+        version of the same mistake — and unnecessary, because the envelope is
+        a column now.
+
         Almost none of it was used. The deck shows at most
         DECK_TRACKS_PER_GENRE per genre and omits anything unmixable, and every
         other envelope the UI asks for already has a lazy path through
@@ -261,29 +267,21 @@ class Warmup:
         summaries first, and only those rows are warmed; the rest of the
         catalog is computed on first request and cached from then on.
         """
+        # One query. The envelope each deck row draws is a stored column, so
+        # choosing the deck IS the precompute — nothing is read per track and
+        # nothing is downsampled.
         with self.database.reading() as q:
-            summaries = [t for t in q.list_track_summaries()
-                         if t.status == db_status.READY]
+            rows = [t for t in q.list_deck_rows() if t.status == db_status.READY]
 
         self._set(message="Building deck")
-        groups = deck.genre_groups([self._row(t) for t in summaries])
+        groups = deck.genre_groups([self._row(t) for t in rows])
         wanted = [row for g in groups for row in g["tracks"]]
+        stored = {t.id: t for t in rows}
 
         self._set(phase=PRECOMPUTING, total=len(wanted), done=0,
-                  message=f"Precomputing waveforms for {len(wanted)} deck tracks")
+                  message=f"Selecting {len(wanted)} deck tracks")
         for i, row in enumerate(wanted, 1):
-            with self.database.reading() as q:
-                analysis = q.get_track_analysis(id=row["id"])
-            from . import analysis_store
-            analysis = analysis_store.hydrate(row["id"], analysis)
-            # Arrays absent means they could not be fetched from the store,
-            # not that the track is broken: the deck row still draws from its
-            # stored envelope, and the timeline warms on first request.
-            if analysis and (analysis.get("frames") or {}).get("rms"):
-                self.cache.warm_native(row["id"], analysis)
-            # Inline the thumbnail so the opening deck is a pure snapshot read.
-            wf = self.cache.get(row["id"], config.DECK_WAVEFORM_POINTS)
-            row["waveform"] = wf["points"] if wf else None
+            row["waveform"] = getattr(stored.get(row["id"]), "deck_waveform", None)
             self._set(done=i)
 
         self.deck = groups

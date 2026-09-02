@@ -39,21 +39,30 @@ class TestInfraApp(unittest.TestCase):
             return [t.id for t in q.list_track_summaries()]
 
     # ------------------------------------------------------------- INF-01
-    def test_inf_01_waveforms_precomputed_at_startup(self):
-        """Every track has both UI envelopes warm before the server is ready —
-        the deck never computes one on demand."""
-        # Only tracks with analysis have an envelope to precompute. Unmixable
-        # tracks are refused at the licence gate before download (LIC-01), so
-        # they have no audio, no analysis and nothing to draw — and the deck
-        # never offers them either.
+    def test_inf_01_envelopes_are_stored_not_recomputed(self):
+        """The deck never computes an envelope on demand.
+
+        This used to be guaranteed by warming an in-process cache at startup.
+        That cache is cold on every new serverless instance — exactly when a
+        first visitor is waiting — and once the frame arrays moved to the
+        object store, warming it meant a round trip per deck track before the
+        app could answer anything. The envelopes are columns now, so the
+        guarantee is that they are ON THE ROW, which survives a cold start.
+        """
         with read() as q:
-            ids = [t.id for t in q.list_track_summaries() if t.mixable]
-        self.assertTrue(ids)
-        for tid in ids:
-            for pts in (config.DECK_WAVEFORM_POINTS, config.TIMELINE_WAVEFORM_POINTS):
+            rows = [t for t in q.list_deck_rows() if t.mixable]
+        self.assertTrue(rows)
+        for row in rows:
+            self.assertIsNotNone(
+                row.deck_waveform, f"track {row.id} has no stored deck envelope")
+            self.assertEqual(len(row.deck_waveform), config.DECK_WAVEFORM_POINTS)
+
+    def test_inf_01_the_opening_deck_carries_its_waveforms(self):
+        """Whatever the deck offers, it offers ready to draw."""
+        for group in self.warm.deck:
+            for row in group["tracks"]:
                 self.assertIsNotNone(
-                    self.cache.get(tid, pts),
-                    f"track {tid} @ {pts} points was not precomputed")
+                    row.get("waveform"), f"deck row {row['id']} has no waveform")
 
     def test_inf_01_deck_request_reads_no_database(self):
         """The opening deck is served entirely from the warmup snapshot."""
