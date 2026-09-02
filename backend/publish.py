@@ -39,6 +39,7 @@ correct response to any of those is to run the same command again.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 import time
@@ -125,8 +126,22 @@ def budget_report(todo, mode):
 # Stage 1 — fetch masters (network, rate limited)
 # --------------------------------------------------------------------------
 
+def _load_cached_meta(store, track_id):
+    """Source metadata recorded when the master was ingested, or None."""
+    key = storage.meta_key(track_id)
+    if not store.exists(key):
+        return None
+    path = store.local_path(key)
+    if path is None:
+        return None                      # remote store: not worth a round trip
+    try:
+        return json.loads(path.read_text())
+    except (OSError, ValueError):
+        return None                      # corrupt sidecar: re-fetch rather than guess
+
+
 def fetch_masters(entries, mode, store, io_workers=2, api_limiter=None,
-                  dl_limiter=None, budget=None, log=print):
+                  dl_limiter=None, budget=None, refetch=False, log=print):
     """Resolve metadata and put every master in the store. Returns [(meta, key)].
 
     Offline mode synthesises instead of downloading, so it skips the network
@@ -143,10 +158,29 @@ def fetch_masters(entries, mode, store, io_workers=2, api_limiter=None,
     api_limiter = api_limiter or ratelimit.TokenBucket(jamendo.DEFAULT_API_RATE)
     dl_limiter = dl_limiter or ratelimit.TokenBucket(jamendo.DEFAULT_DOWNLOAD_RATE)
 
-    genre_by_id = {str(e["id"]): e.get("genre", "house") for e in entries}
-    log(f"[meta] {len(entries)} tracks in "
-        f"{jamendo.estimate_api_requests(len(entries))} batched request(s)")
-    metas = jamendo.fetch_metadata([e["id"] for e in entries],
+    # Anything whose master AND metadata sidecar are already in the store costs
+    # nothing to reuse. This is what makes rebuilding the catalog free: wiping
+    # the database (or re-rendering variants after a grid change) would
+    # otherwise re-download every track and re-spend monthly API quota to
+    # re-learn metadata already on disk. Only `--refetch` overrides it.
+    cached, need_fetch = [], []
+    for e in entries:
+        tid = str(e["id"])
+        meta = None if refetch else _load_cached_meta(store, tid)
+        if meta is not None and store.exists(storage.master_key(tid)):
+            cached.append((meta, storage.master_key(tid)))
+        else:
+            need_fetch.append(e)
+    if cached:
+        log(f"[reuse] {len(cached)} master(s) already in the store — "
+            f"no API requests, no downloads")
+    if not need_fetch:
+        return cached
+
+    genre_by_id = {str(e["id"]): e.get("genre", "house") for e in need_fetch}
+    log(f"[meta] {len(need_fetch)} track(s) in "
+        f"{jamendo.estimate_api_requests(len(need_fetch))} batched request(s)")
+    metas = jamendo.fetch_metadata([e["id"] for e in need_fetch],
                                    genre_by_id=genre_by_id,
                                    limiter=api_limiter, budget=budget)
 
@@ -156,7 +190,7 @@ def fetch_masters(entries, mode, store, io_workers=2, api_limiter=None,
         samples, sr = jamendo.decode_to_samples(encoded)
         return meta, jamendo.persist_master(meta, samples, sr, store=store)
 
-    out = []
+    out = list(cached)
     # Bounded concurrency; the limiter caps the rate regardless, but an
     # unbounded pool would still open every socket at once.
     with ThreadPoolExecutor(max_workers=io_workers) as pool:
@@ -242,7 +276,8 @@ def _render_task(args):
 # --------------------------------------------------------------------------
 
 def publish(database, entries, mode, store=None, workers=None, io_workers=2,
-            api_rate=None, download_rate=None, request_budget=None, log=print):
+            api_rate=None, download_rate=None, request_budget=None,
+            refetch=False, log=print):
     """Ingest `entries` in parallel and write them to `database` and the store.
 
     Database writes all happen here, in the calling thread. Worker processes
@@ -271,7 +306,7 @@ def publish(database, entries, mode, store=None, workers=None, io_workers=2,
     t0 = time.monotonic()
     fetched = fetch_masters(todo, mode, store, io_workers=io_workers,
                             api_limiter=api_limiter, dl_limiter=dl_limiter,
-                            budget=budget, log=log)
+                            budget=budget, refetch=refetch, log=log)
     log(f"[fetch] {len(fetched)}/{len(todo)} master(s) in "
         f"{time.monotonic() - t0:.1f}s")
 
@@ -338,6 +373,10 @@ def main(argv=None):
                         "aborts rather than exceeding it")
     p.add_argument("--limit", type=int, default=None,
                    help="only publish the first N pending tracks")
+    p.add_argument("--refetch", action="store_true",
+                   help="re-download masters even when they are already in "
+                        "the store. Spends API quota — the default reuses "
+                        "local masters so a catalog rebuild is free.")
     p.add_argument("--dry-run", action="store_true",
                    help="report the plan and API cost, then exit")
     args = p.parse_args(argv)
@@ -365,7 +404,7 @@ def main(argv=None):
     publish(database, todo, cfg["mode"], store=store, workers=args.workers,
             io_workers=args.io_workers, api_rate=args.api_rate,
             download_rate=args.download_rate,
-            request_budget=args.request_budget)
+            request_budget=args.request_budget, refetch=args.refetch)
     return 0
 
 

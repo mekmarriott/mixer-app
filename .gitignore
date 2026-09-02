@@ -17,6 +17,9 @@ test-results/
 playwright-report/
 blob-report/
 
+# Local PostgreSQL cluster created by `make up`
+.pgdata/
+
 # Vercel
 .vercel/
 

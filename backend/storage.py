@@ -52,6 +52,17 @@ def variant_key(track_id, grid_bpm, ext="wav"):
     return f"variants/{track_id}_{int(grid_bpm)}.{ext}"
 
 
+def meta_key(track_id):
+    """Sidecar holding the source metadata a master was ingested with.
+
+    Written next to every master so that rebuilding the catalog costs zero
+    API requests: without it, a wiped database forces a re-fetch of metadata
+    for tracks whose audio is already on disk, which spends monthly Jamendo
+    quota to re-learn something we already knew. See publish.fetch_masters.
+    """
+    return f"meta/{track_id}.json"
+
+
 def _content_type(key):
     return mimetypes.guess_type(key)[0] or "application/octet-stream"
 

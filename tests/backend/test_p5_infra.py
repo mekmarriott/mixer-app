@@ -194,8 +194,18 @@ class TestAdmissionControl(unittest.TestCase):
             dbguard.BoundedDatabase(FakeDB(), max_concurrency=9)
         dbguard.BoundedDatabase(FakeDB(), max_concurrency=3)   # below: fine
 
-        # SQLite advertises no ceiling, so admission itself is the bound.
-        self.assertIsNone(dbguard.connection_ceiling(database))
+        # What the real engine advertises depends on which one it is, and the
+        # suite runs against both (`make test-pg`). SQLite makes a connection
+        # per thread and has no intrinsic ceiling, so admission itself is the
+        # bound; Postgres reports its pool size and admission must sit strictly
+        # below it.
+        ceiling = dbguard.connection_ceiling(database)
+        if database.dialect == "sqlite":
+            self.assertIsNone(ceiling)
+        else:
+            self.assertEqual(ceiling, database.engine._pool.max_size)
+            self.assertLess(dbguard.BoundedDatabase(database).max_concurrency,
+                            ceiling)
 
     def test_inf_02_semaphore_caps_in_flight_work(self):
         peak = {"n": 0}

@@ -230,9 +230,19 @@ def _license_from_ccurl(url):
 
 
 def persist_master(meta, samples, sr, store=None):
-    """Write the master through the blob store and return its object key."""
+    """Write the master through the blob store and return its object key.
+
+    A JSON sidecar of the source metadata goes alongside it. That is what lets
+    a later run reuse this master without touching the API at all: without it,
+    rebuilding a wiped catalog would re-spend monthly quota re-learning
+    metadata whose audio is already on disk (see publish.fetch_masters).
+    """
+    import json
+
     store = store or storage.get_store()
     key = storage.master_key(meta["id"])
+    store.put_bytes(storage.meta_key(meta["id"]),
+                    json.dumps(meta, indent=2).encode(), "application/json")
     dst = store.local_path(key)
     if dst is not None:                       # local backend: write in place
         dst.parent.mkdir(parents=True, exist_ok=True)

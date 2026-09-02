@@ -719,10 +719,19 @@ Implemented on the `worktree-infra` branch. 76 backend + 42 frontend tests pass.
 
 **Added to the verify list in §8**
 
-- **The Postgres path has never run against a live server.** The dialect layer
-  asserts the DDL and parameter style that *would* be sent; nothing has
-  executed against real Postgres. A green suite does not mean a working
-  deploy, and this should be exercised before trusting one.
+- ~~The Postgres path has never run against a live server.~~ **Done.**
+  `make test-pg` brings up a project-local PostgreSQL cluster and runs the
+  full backend suite against it: 114 tests pass, and the catalog lands with
+  `boolean` / `double precision` / `jsonb` column types, confirming the
+  dialect layer's type mapping executes rather than merely rendering. It also
+  confirms `verify_schema()`'s `SELECT * LIMIT 0` returns positional order on
+  Postgres. Two things it does **not** cover: Supabase's transaction pooler
+  (a Supabase component — `prepare_threshold` and connection-limit behaviour
+  still need a real instance), and any Supabase-specific auth or networking.
+- Finding from that first run: `psycopg-pool` was missing from the serving
+  manifest even though `engine.py` uses `psycopg_pool.ConnectionPool`. Nothing
+  caught it because nothing had ever constructed a `PostgresEngine`. A deploy
+  would have failed on first request.
 - The 35,000 requests/month figure is still unconfirmed at the source (§10.1),
   and the API exposes no telemetry to confirm it against.
 

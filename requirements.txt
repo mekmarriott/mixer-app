@@ -27,5 +27,7 @@ numpy==2.2.1
 # — which runs on stdlib sqlite3 and needs neither of these — the deployed
 # function always talks to Postgres, so both belong in the serving manifest.
 # engine.py uses psycopg_pool.ConnectionPool, so psycopg alone is not enough.
+# requirements-postgres.txt installs the same pair into a local SQLite dev
+# environment; keep the pins here and there in step.
 psycopg[binary]==3.2.3
 psycopg-pool==3.2.4
