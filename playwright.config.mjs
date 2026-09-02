@@ -25,13 +25,11 @@ export default defineConfig({
   fullyParallel: false,
   workers: 1,
   forbidOnly: !!process.env.CI,
-  // Retries are a MITIGATION FOR THE API-01 DEFECT, not a general allowance
-  // for flaky tests. The shared-SQLite read race (see
-  // tests/e2e/api-concurrency.spec.mjs) makes roughly 1 in 3 runs drop a setup
-  // request, which fails a test that is otherwise deterministic. Drop this back
-  // to 0 once API-01 is fixed — if anything still flakes after that, the test
-  // is wrong and should be repaired rather than retried.
-  retries: 2,
+  // No retries. These were a mitigation for the API-01 defect (the shared
+  // SQLite connection race), which is fixed: connections are now per-thread
+  // and scoped to a request. If anything flakes, the test is wrong and should
+  // be repaired rather than retried.
+  retries: 0,
   reporter: process.env.CI ? [["list"], ["html", { open: "never" }]] : [["list"]],
 
   // Playback assertions wait on real audio time; keep the per-test budget generous.

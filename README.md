@@ -105,9 +105,31 @@ drag-and-drop, canvas rendering, the WebAudio clock, and network silence
 during drag.
 
 **`docs/automation-test-manifest.md` is the coverage map** — every
-testing-document id, the suite and test that proves it, the two known gaps
-(including an open SQLite concurrency defect the browser suite found), and the
-one check that still needs a human with ears.
+testing-document id, the suite and test that proves it, the remaining gap, and
+the one check that still needs a human with ears. It also records the SQLite
+concurrency defect the browser suite found (API-01) and how it was fixed.
+
+## Database
+
+Locally the backend uses a SQLite file under `data/`; no setup needed. All
+persistence goes through `backend/db/`, where the schema and every query live
+in `.sql` files and the typed Python bindings are generated from them. After
+editing anything under `backend/db/sql/`, regenerate and commit the result:
+
+```bash
+.venv/bin/python -m backend.db.codegen
+```
+
+Deploying against Supabase is a connection string, not a code change:
+
+```bash
+.venv/bin/pip install -r requirements-postgres.txt
+export DJMIXER_DATABASE_URL='postgresql://…@…pooler.supabase.com:6543/postgres'
+```
+
+See **`docs/database.md`** for the query annotation format, the transaction and
+concurrency model, and what the Postgres path does and does not have test
+coverage for.
 
 ## Latency & scaling
 
@@ -134,19 +156,26 @@ backend/            Flask API + pipeline
   matching.py       Camelot table, match score, recommendations
   transitions.py    windowed transition scoring (prefix-sum backed)
   licensing.py      CC parsing, ND/SA/NC flags, attribution
-  db.py / timing.py / benchmark.py / config.py
+  db/               the only code that touches persistence — see docs/database.md
+    sql/            canonical schema + annotated queries (source of truth)
+    codegen.py      sqlc-style generator -> models.py + queries.py
+    dialect.py      canonical types + placeholders -> SQLite / PostgreSQL
+    engine.py       connections, transactions, concurrency control
+    catalog.py      Database / Catalog interface
+  timing.py / benchmark.py / config.py
 frontend/           no-build vanilla ES modules
   js/{state,align,crossfade,navbar,deck,attribution}.js   pure logic (tested)
   js/{app,timeline,audio,api}.js                          DOM / canvas / WebAudio
-tests/backend/      unittest — P1/P2/P3 + backend P4 (40)
+tests/backend/      unittest — P1/P2/P3 + backend P4 + DB layer P5 (76)
 tests/frontend/     node:test — UI interaction logic P4 (42)
 tests/e2e/          Playwright — browser-only behaviour (12)
 config/tracks.json  catalog + source mode
 requirements.txt    backend dependencies
+requirements-postgres.txt   deployment extras (Supabase/PostgreSQL)
 package.json        test tooling only (Playwright)
 playwright.config.mjs
 docs/               design-document.md, automation-test-manifest.md,
-                    latency-report.md
+                    database.md, latency-report.md
 data/               generated at runtime (db + audio) — safe to delete
 data-e2e/           browser-suite catalog — safe to delete
 ```

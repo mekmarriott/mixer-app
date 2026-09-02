@@ -1,0 +1,13 @@
+# Deployment extras: PostgreSQL / Supabase support.
+#
+#   .venv/bin/pip install -r requirements-postgres.txt
+#
+# Only needed when DJMIXER_DATABASE_URL points at Postgres. With it unset the
+# backend runs on SQLite from the standard library and none of this is
+# imported — backend/db/engine.py imports psycopg lazily, inside PostgresEngine.
+#
+# See docs/database.md for the connection-string form (use Supabase's
+# transaction pooler on port 6543, not the direct connection).
+
+psycopg[binary]==3.2.3
+psycopg-pool==3.2.4

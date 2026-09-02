@@ -139,31 +139,37 @@ manual sign-off list in `design-document.md` §12 before Playwright existed.
 
 ## Known defects and gaps
 
-Tracked here rather than left to be rediscovered. Both have a test attached, so
-each will announce itself when fixed.
+Tracked here rather than left to be rediscovered. Each has a test attached, so
+each announces itself when fixed.
 
-### API-01 — concurrent catalog reads fail (open defect)
+### API-01 — concurrent catalog reads fail (FIXED)
 
-**`tests/e2e/api-concurrency.spec.mjs`, marked `test.fail()`** — it is expected
-to fail today, and Playwright raises an error the moment it starts passing.
+**`tests/e2e/api-concurrency.spec.mjs`** — now a passing regression test. The
+`test.fail()` annotation is gone, and `playwright.config.mjs` is back to
+`retries: 0`.
 
-`backend/app.py` opens one `sqlite3.Connection` with `check_same_thread=False`
-and shares it across every Flask worker thread. `backend/db.py` guards writes
-with `WRITE_LOCK` but takes no lock on reads (`get_track`, `analysis_of`,
-`variants_for`). Concurrent `execute()` calls on a single connection interleave,
-so a read either raises `sqlite3.InterfaceError` (served as **HTTP 500**) or
-returns a phantom-empty row that the endpoint reports as **HTTP 404 for a track
-that exists**.
+*The defect.* `backend/app.py` opened one `sqlite3.Connection` with
+`check_same_thread=False` and shared it across every Flask worker thread. The
+old `backend/db.py` guarded writes with `WRITE_LOCK` but took no lock on reads
+(`get_track`, `analysis_of`, `variants_for`). Concurrent `execute()` calls on a
+single connection interleave, so a read either raised `sqlite3.InterfaceError`
+(served as **HTTP 500**) or returned a phantom-empty row that the endpoint
+reported as **HTTP 404 for a track that exists**.
 
 The browser found this on the suite's first run: opening the page fires one
-waveform request per deck row in parallel, and roughly **15–20% of them fail**.
-The unittest suite cannot see it — Flask's `test_client` is single-threaded.
+waveform request per deck row in parallel, and roughly **15–20% of them failed**.
+The unittest suite could not see it — Flask's `test_client` is single-threaded.
 
-`design-document.md` §6 states that "`check_same_thread=False` + a write lock
-handles Flask's threaded server". That is not sufficient; reads need the same
-serialization, or each thread needs its own connection.
+*The fix.* `backend/db/` replaced the shared handle. `SQLiteEngine` opens one
+connection **per thread** and the request handlers scope it to the request via
+`database.reading()`, so there is no shared cursor left to interleave; the
+database also runs in WAL mode, so a reader never waits on the writer.
+`design-document.md` §6 previously claimed "`check_same_thread=False` + a write
+lock handles Flask's threaded server" — it did not, and §6 now describes the
+per-thread arrangement. `tests/backend/test_p5_db.py::TestConcurrency` covers
+the same ground without a browser.
 
-Repro without a browser, against a server on port 5199:
+Repro (now expected to print all-200), against a server on port 5199:
 
 ```bash
 .venv/bin/python - <<'PY'
@@ -178,20 +184,16 @@ def hit(t):
 c = collections.Counter()
 with cf.ThreadPoolExecutor(max_workers=9) as ex:
     for s in ex.map(hit, IDS*3): c[s] += 1
-print(dict(c))   # concurrent: mixed 200/404/500 — sequential: all 200
+print(dict(c))   # before the fix: mixed 200/404/500 — now: {200: 27}
 PY
 ```
 
-Impact in the running app is intermittent and mostly cosmetic today — a deck row
-silently misses its mini waveform, because the failing `fetch` rejects inside a
-`.then()` no one catches. It is not cosmetic at scale, and it is a correctness
-bug in the storage layer, not the UI.
-
-**It also destabilizes this suite.** Roughly one run in three lost a *setup*
-request and failed an otherwise deterministic test, so `playwright.config.mjs`
-sets `retries: 2` purely to absorb it. That retry allowance is a mitigation for
-this defect and nothing else — set it back to `0` when API-01 is fixed, and
-repair anything that still flakes rather than retrying it.
+While it was open, the symptom in the running app was intermittent and mostly
+cosmetic — a deck row silently missed its mini waveform, because the failing
+`fetch` rejected inside a `.then()` no one caught — but it was a correctness bug
+in the storage layer, not the UI. It also destabilized this suite: roughly one
+run in three lost a *setup* request and failed an otherwise deterministic test,
+which is why `retries: 2` was set. Both are resolved.
 
 ### P4-05b — mix title does not persist across reload (by design, v1)
 

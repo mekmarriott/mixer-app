@@ -97,15 +97,43 @@ project plan): 44.1 kHz masters, compressed delivery (Opus/AAC via ffmpeg,
 which is already used for Jamendo MP3 decode in `jamendo` mode), R2 + CDN.
 The latency report's storage projections use compressed sizes.
 
-## 6. Persistence: SQLite
+## 6. Persistence: a generated DB layer over SQLite (Postgres-ready)
 
 Single-file SQLite with JSON blobs for analysis/segments. Chosen because the
 prototype's DB work is trivial (a few hundred rows, read-heavy) and it keeps
-`python -m backend.app` the only startup step. `check_same_thread=False` +
-a write lock handles Flask's threaded server. The schema is deliberately
-boring (tracks / variants / latency) so the move to Postgres/Supabase at 500+
-tracks (per the latency report's infra table) is a driver swap plus indexes,
-not a redesign.
+`python -m backend.app` the only startup step. The schema is deliberately
+boring (tracks / variants / latency).
+
+Everything that touches persistence goes through `backend/db/`; nothing outside
+it sees a connection, a cursor or a SQL string.
+
+**SQL lives in `.sql` files.** `db/sql/schema.sql` is the single source of
+truth and `db/sql/queries/*.sql` carry sqlc-style annotations
+(`-- name: GetTrack :one`). `db/codegen.py` parses both and generates
+`models.py` (row dataclasses) and `queries.py` (one typed method per
+statement); the generated files are committed and a test fails if they drift.
+sqlc itself targets Go and its Python plugin needs a Go toolchain plus a
+protobuf plugin, so this reimplements the useful part rather than adopting the
+tool. The payoff is that a renamed column breaks code generation instead of
+silently returning `None`, and a misspelled parameter is caught against the
+schema instead of binding NULL.
+
+**Concurrency.** The original arrangement — one connection with
+`check_same_thread=False` shared across Flask's worker threads, with a lock
+around only the writes — was not sufficient, and the browser suite caught it
+(API-01 in `docs/automation-test-manifest.md`): concurrent reads on the shared
+connection interleaved and returned 500s and phantom 404s. Connections are now
+**per thread**, held only for the life of a request, in WAL mode so readers
+never block the writer, with `foreign_keys=ON`, a `busy_timeout` for
+out-of-process writers, and a process-wide lock serialising writes. Read and
+write scopes are explicit and nest, so ingestion commits a track and its
+rendered variants as one transaction instead of a commit per statement.
+
+**Postgres/Supabase is a URL, not a rewrite.** `db/dialect.py` maps the
+canonical column types to each engine's DDL and rewrites `:named` placeholders
+into psycopg's `%(name)s`; query bodies stay neutral (`ON CONFLICT` works on
+both), so there is one set of `.sql` files rather than one per engine. Setting
+`DJMIXER_DATABASE_URL` switches engines. See `docs/database.md`.
 
 ## 7. API server: Flask
 
