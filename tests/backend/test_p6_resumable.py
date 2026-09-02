@@ -210,6 +210,77 @@ class TestCrashRecovery(ResumableCase):
         self.assertEqual([r["id"] for r in ok], [good["id"]])
 
 
+class TestCatalogIsNotTheConfigFile(ResumableCase):
+    """config/tracks.json seeds a local run; it does not define the catalog.
+
+    Tracks published straight into the production database and blob store —
+    never named in the seed file — must be first-class: served by the API and
+    visible in the ingestion report. The serving endpoints read only the
+    database, so the risk is the report claiming `complete` while silently
+    omitting them.
+    """
+
+    def _publish_directly(self, track_id="9999"):
+        """A row that exists only in the database, as a direct publish would."""
+        self.ingest()                       # gives us real analysis to clone
+        with self.database.reading() as q:
+            seed = q.get_track(id=self.tid)
+        self.database.catalog.save_ingested_track({
+            "id": track_id, "name": "Uploaded Directly", "artist": "Ops",
+            "genre": seed.genre, "license": seed.license,
+            "nd": seed.license_nd, "sa": seed.license_sa, "nc": seed.license_nc,
+            "mixable": True, "native_bpm": seed.native_bpm,
+            "camelot": seed.camelot, "duration_s": seed.duration_s,
+            "audio_key": seed.audio_key, "analysis": seed.analysis_json,
+            "segments": seed.segments_json, "status": status.READY,
+        })
+        self.database.catalog.advance_status(track_id, status.READY)
+        return track_id
+
+    def test_api_serves_a_track_that_is_not_in_the_config(self):
+        from backend.app import create_app
+        other = self._publish_directly()
+        cfg = {"mode": "offline", "tracks": [self.entry]}
+        with mock.patch.object(config, "load_tracks_config", return_value=cfg):
+            app = create_app(run_ingestion=False, database=self.database)
+            app.config["TESTING"] = True
+            client = app.test_client()
+            listed = [t["id"] for t in client.get("/api/tracks").get_json()]
+            self.assertIn(other, listed, "/api/tracks hid a directly-published track")
+            self.assertEqual(client.get(f"/api/tracks/{other}").status_code, 200)
+
+    def test_ingest_report_lists_unconfigured_tracks(self):
+        from backend.app import create_app
+        other = self._publish_directly()
+        cfg = {"mode": "offline", "tracks": [self.entry]}
+        with mock.patch.object(config, "load_tracks_config", return_value=cfg):
+            app = create_app(run_ingestion=False, database=self.database)
+            app.config["TESTING"] = True
+            body = app.test_client().get("/api/ingest").get_json()
+
+        by_id = {t["id"]: t for t in body["tracks"]}
+        self.assertIn(other, by_id, "/api/ingest omitted a directly-published track")
+        self.assertFalse(by_id[other]["in_config"])
+        self.assertTrue(by_id[self.tid]["in_config"])
+        self.assertEqual(body["configured"], 1)
+        self.assertEqual(body["unconfigured"], 1)
+
+    def test_completeness_is_about_the_seed_file_only(self):
+        """An unconfigured track is not ingestion's job, so it must neither
+        break `complete` nor be counted as something still to do."""
+        other = self._publish_directly()
+        state = self.database.catalog.ingestion_state([self.tid])
+        by_id = {s["id"]: s for s in state}
+        self.assertEqual(set(by_id), {self.tid, other})
+        self.assertTrue(all(s["status"] == status.READY for s in state))
+
+    def test_no_config_means_every_row_counts(self):
+        other = self._publish_directly()
+        state = self.database.catalog.ingestion_state()
+        self.assertEqual({s["id"] for s in state}, {self.tid, other})
+        self.assertTrue(all(s["in_config"] for s in state))
+
+
 class TestIngestStateReporting(ResumableCase):
     def test_reports_configured_but_unstarted_tracks(self):
         state = self.database.catalog.ingestion_state([self.tid, "9999"])

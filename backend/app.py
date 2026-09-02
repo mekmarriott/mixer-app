@@ -175,11 +175,17 @@ def create_app(run_ingestion=True, database=None, warmup_async=False):
         counts = {}
         for entry in state:
             counts[entry["status"]] = counts.get(entry["status"], 0) + 1
+        # `complete` is about the seed file only: a track published straight
+        # into the database was never ingestion's job, so it cannot make
+        # ingestion incomplete — but it is still listed, flagged in_config
+        # false, so it is visible rather than silently absent.
+        seeded = [e for e in state if e["in_config"]]
         return jsonify({
             "mode": cfg["mode"], "counts": counts,
+            "configured": len(seeded),
+            "unconfigured": len(state) - len(seeded),
             "failed": sum(1 for entry in state if entry["failed"]),
-            "complete": all(entry["status"] == track_status.READY
-                            for entry in state),
+            "complete": all(e["status"] == track_status.READY for e in seeded),
             "tracks": state})
 
     # ----------------------------------------------------------- zero state

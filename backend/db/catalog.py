@@ -205,10 +205,25 @@ class Catalog:
             return q.get_track_status(id=track_id) or status_mod.PENDING
 
     def ingestion_state(self, configured_ids=None):
-        """Per-track ingestion state, including configured tracks never started.
+        """Per-track ingestion state, over the UNION of the config file and the
+        database.
 
-        Reports what the catalog endpoint must not: a track that is still
-        being fetched, and one that failed and why.
+        Reports what the catalog endpoint must not: a track still being
+        fetched, and one that failed and why.
+
+        The union matters. config/tracks.json is a seed for local runs and
+        service startup, not the definition of the catalog — a track published
+        straight into the production database and blob store (which the
+        serving endpoints are happy to serve, since they read only the
+        database) would otherwise be invisible here, and a catalog containing
+        it would still report `complete`. So each entry carries `in_config`:
+
+          in_config=True,  row present     a seeded track, ingested
+          in_config=True,  no row          seeded but not ingested yet
+          in_config=False, row present     published directly, not seeded
+
+        Only the first two are ingestion's responsibility; the third is
+        reported so it is visible, not so it can be acted on.
         """
         with self.db.reading() as q:
             rows = {r.id: r for r in q.list_track_statuses()}
@@ -217,21 +232,31 @@ class Catalog:
                 variant_counts[variant.track_id] = \
                     variant_counts.get(variant.track_id, 0) + 1
 
-        ids = [str(i) for i in configured_ids] if configured_ids is not None \
-            else list(rows)
+        if configured_ids is None:
+            configured = set(rows)          # no config in play: everything counts
+            ids = list(rows)
+        else:
+            configured = {str(i) for i in configured_ids}
+            # Config order first (it is the human-meaningful order), then any
+            # database row the config does not mention.
+            ids = [str(i) for i in configured_ids]
+            ids += [tid for tid in rows if tid not in configured]
+
         out = []
         for track_id in ids:
             row = rows.get(track_id)
+            in_config = track_id in configured
             if row is None:
                 out.append({"id": track_id, "status": status_mod.PENDING,
-                            "error": None, "failed": False, "name": None,
-                            "artist": None, "mixable": False, "variants": 0,
-                            "fetched_at": None, "analyzed_at": None,
-                            "ready_at": None})
+                            "error": None, "failed": False, "in_config": in_config,
+                            "name": None, "artist": None, "mixable": False,
+                            "variants": 0, "fetched_at": None,
+                            "analyzed_at": None, "ready_at": None})
                 continue
             out.append({
                 "id": row.id, "status": row.status, "error": row.status_error,
-                "failed": status_mod.is_failed(row), "name": row.name,
+                "failed": status_mod.is_failed(row), "in_config": in_config,
+                "name": row.name,
                 "artist": row.artist, "mixable": bool(row.mixable),
                 "variants": variant_counts.get(row.id, 0),
                 "fetched_at": row.fetched_at, "analyzed_at": row.analyzed_at,
