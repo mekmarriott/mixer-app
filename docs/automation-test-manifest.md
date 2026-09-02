@@ -17,7 +17,7 @@ grep -rhoE "P[1-4]-[0-9]{2}" tests/ | sort -u
 
 | Suite | Runner | Count | Runs in | What it is for |
 |---|---|---|---|---|
-| **Backend** | `unittest` (stdlib) | 128 | ~8 s | Pipeline, compliance gates, API contract, startup precompute and DB concurrency. Builds a real 5-track fixture catalog through one full ingestion. |
+| **Backend** | `unittest` (stdlib) | 222 | ~12 s | Pipeline, compliance gates, API contract, startup precompute and DB concurrency. Builds a real 5-track fixture catalog through one full ingestion. |
 | **Frontend logic** | `node:test` (stdlib) | 70 | <1 s | The pure interaction modules (`state`, `align`, `crossfade`, `navbar`, `deck`, `attribution`, `boot`) — no DOM, no WebAudio. |
 | **Browser** | Playwright + Chromium | 32 | ~57 s | What the other two structurally cannot reach: native drag-and-drop, canvas pixels, the WebAudio clock, and real network behaviour. |
 | **Manual** | a human with ears | 1 | — | Perceptual judgement only. |
@@ -166,6 +166,24 @@ which predates them.
 | ZS-03 | Pair analysis starts only after track 1 is selected | Browser | `ZS-03 pair analysis only starts once track 1 is selected` |
 | ZS-04 | Status endpoint reports readiness and pool bounds | Browser | `ZS-04 status endpoint reports readiness and pool bounds` |
 | ZS-05 | Boot overlay is dismissed once the catalog is ready | Browser | `ZS-05 the boot overlay is dismissed once the catalog is ready` |
+
+### Suite determinism
+
+The browser suite shares one server and one SQLite catalog across all 32 tests,
+so isolation is a property the harness has to provide rather than assume.
+
+It did not, briefly. `bootApp` created a fresh mix and relied on boot resuming
+"the most recently edited" one — but a previous test's autosave still in flight
+re-stamps ITS mix as most recent, so a test could silently start on a populated
+mix. The symptom was a *different* set of failures on each full run while every
+spec file passed in isolation, which reads like an environment problem and is
+easy to misattribute to whatever diff is in hand. Every test now selects its
+mix explicitly through the picker. Five consecutive cold runs (`rm -rf
+data-e2e/`) pass 32/32.
+
+If the suite starts varying again, suspect shared state before suspecting a
+diff: the catalog, the mixes table, and a leftover server on port 5199 are the
+three things tests can inherit from each other.
 
 ### Not yet covered
 

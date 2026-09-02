@@ -36,6 +36,13 @@ DELETE FROM mixes WHERE id = :id;
 -- name: ListMixTracks :many
 SELECT * FROM mix_tracks WHERE mix_id = :mix_id;
 
+-- Track counts for the whole picker in ONE query. Listing mixes previously
+-- issued a chain read per mix, so the cost of opening the menu grew with the
+-- number of saved mixes — and the menu is refreshed after every save.
+-- name: CountMixTracksByMix :many
+-- columns: mix_id TEXT, n INTEGER
+SELECT mix_id, COUNT(*) AS n FROM mix_tracks GROUP BY mix_id;
+
 -- name: GetMixTrack :one
 SELECT * FROM mix_tracks WHERE id = :id;
 

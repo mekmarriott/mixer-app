@@ -225,3 +225,60 @@ class TestMixApi(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestMixListingCost(unittest.TestCase):
+    """MIX-06 — listing mixes must not cost a query per mix.
+
+    The picker is refreshed after every save, so an O(mixes) listing makes the
+    app slower the longer someone uses it.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.database, _, cls.tmp = get_fixture()
+        app = create_app(run_ingestion=False, database=cls.database)
+        app.config["TESTING"] = True
+        cls.client = app.test_client()
+        cls.repo = app.config["MIXES"]
+
+    def setUp(self):
+        for m in self.client.get("/api/mixes").get_json():
+            self.client.delete(f"/api/mixes/{m['id']}")
+
+    def test_mix_06_listing_is_flat_in_the_number_of_mixes(self):
+        seen = []
+        real = self.repo.database.reading
+
+        def counting():
+            seen.append(1)
+            return real()
+
+        for n in (2, 12):
+            for m in self.client.get("/api/mixes").get_json():
+                self.client.delete(f"/api/mixes/{m['id']}")
+            for i in range(n):
+                self.client.post("/api/mixes", json={"name": f"m{i}"})
+
+            seen.clear()
+            self.repo.database.reading = counting
+            try:
+                listed = self.repo.list()
+            finally:
+                self.repo.database.reading = real
+
+            self.assertEqual(len(listed), n)
+            # One read scope, whatever the mix count.
+            self.assertEqual(len(seen), 1, f"{len(seen)} read scopes for {n} mixes")
+
+    def test_mix_06_counts_are_still_correct(self):
+        ids = [t["id"] for t in self.client.get("/api/tracks").get_json()]
+        empty = self.client.post("/api/mixes", json={"name": "empty"}).get_json()
+        full = self.client.post("/api/mixes", json={"name": "full"}).get_json()
+        self.client.put(f"/api/mixes/{full['id']}/tracks", json={"tracks": [
+            {"track_id": ids[0], "delta_beats": 0, "grid_bpm": 124},
+            {"track_id": ids[1], "delta_beats": 96, "grid_bpm": 124},
+        ]})
+        counts = {m["name"]: m["track_count"] for m in self.client.get("/api/mixes").get_json()}
+        self.assertEqual(counts["empty"], 0)
+        self.assertEqual(counts["full"], 2)

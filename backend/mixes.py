@@ -147,11 +147,15 @@ class MixRepository:
 
     # -------------------------------------------------------------- reads
     def list(self):
+        """Every saved mix, most recently edited first.
+
+        Two queries regardless of how many mixes exist: the picker is
+        refreshed after every save, so a per-mix chain read made opening the
+        menu cost more the longer someone had been using the app.
+        """
         with self.database.reading() as q:
             mixes = q.list_mixes()
-            counts = {}
-            for m in mixes:
-                counts[m.id] = len(q.list_mix_tracks(mix_id=m.id))
+            counts = {r.mix_id: r.n for r in q.count_mix_tracks_by_mix()}
         return [{"id": m.id, "name": m.name, "track_count": counts.get(m.id, 0),
                  "updated_at": m.updated_at, "created_at": m.created_at}
                 for m in mixes]

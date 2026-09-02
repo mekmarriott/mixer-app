@@ -39,6 +39,7 @@ ON CONFLICT (id) DO UPDATE SET
     "TouchMix": """UPDATE mixes SET updated_at = :updated_at WHERE id = :id""",
     "DeleteMix": """DELETE FROM mixes WHERE id = :id""",
     "ListMixTracks": """SELECT * FROM mix_tracks WHERE mix_id = :mix_id""",
+    "CountMixTracksByMix": """SELECT mix_id, COUNT(*) AS n FROM mix_tracks GROUP BY mix_id""",
     "GetMixTrack": """SELECT * FROM mix_tracks WHERE id = :id""",
     "UpsertMixTrack": """INSERT INTO mix_tracks (id, mix_id, track_id, next_id, delta_beats, grid_bpm)
 VALUES (:id, :mix_id, :track_id, :next_id, :delta_beats, :grid_bpm)
@@ -244,6 +245,14 @@ class Queries:
         rows = cur.fetchall()
         cur.close()
         return [models.MixTrack._from_row(r) for r in rows]
+
+    def count_mix_tracks_by_mix(self):
+        """`CountMixTracksByMix` (:many) -> list[CountMixTracksByMixRow]"""
+        params = {}
+        cur = self._execute("CountMixTracksByMix", params)
+        rows = cur.fetchall()
+        cur.close()
+        return [models.CountMixTracksByMixRow._from_row(r) for r in rows]
 
     def get_mix_track(self, id):
         """`GetMixTrack` (:one) -> MixTrack | None"""
