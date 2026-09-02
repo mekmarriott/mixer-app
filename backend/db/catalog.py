@@ -49,6 +49,21 @@ def _deck_waveform_or_none(analysis):
         return None
 
 
+def _native_envelope_or_none(analysis):
+    """The full native envelope, or None when it cannot be derived.
+
+    Kept whole — points plus timing — because the timing is what lets one
+    stored result answer a request at any grid BPM.
+    """
+    if not analysis:
+        return None
+    from .. import config, waveforms          # lazy: avoids an import cycle
+    try:
+        return waveforms.envelope(analysis, config.TIMELINE_WAVEFORM_POINTS)
+    except (KeyError, IndexError, TypeError, ValueError):
+        return None
+
+
 def _region_energies_or_none(analysis, segments):
     """`(outro, intro)` for a track, or None when they cannot be derived.
 
@@ -226,6 +241,10 @@ class Catalog:
             deck_wf = _deck_waveform_or_none(row.get("analysis"))
             if deck_wf is not None:
                 q.set_track_deck_waveform(id=row["id"], deck_waveform=deck_wf)
+            native_env = _native_envelope_or_none(row.get("analysis"))
+            if native_env is not None:
+                q.set_track_native_envelope(id=row["id"],
+                                            native_envelope=native_env)
             for grid_bpm, ratio, object_key, duration_s in variants:
                 q.upsert_variant(track_id=row["id"], grid_bpm=grid_bpm,
                                  ratio=ratio, object_key=object_key,

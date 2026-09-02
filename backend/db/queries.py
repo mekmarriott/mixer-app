@@ -72,6 +72,11 @@ ORDER BY id""",
        mixable, native_bpm, camelot, duration_s, status,
        outro_energy, intro_energy
 FROM tracks WHERE id = :id""",
+    "GetTrackNativeEnvelope": """SELECT native_envelope FROM tracks WHERE id = :id""",
+    "SetTrackNativeEnvelope": """UPDATE tracks SET native_envelope = :native_envelope WHERE id = :id""",
+    "ListTracksMissingNativeEnvelope": """SELECT id FROM tracks
+WHERE analysis_json IS NOT NULL AND native_envelope IS NULL
+ORDER BY id""",
     "SetTrackDeckWaveform": """UPDATE tracks SET deck_waveform = :deck_waveform WHERE id = :id""",
     "ListTracksMissingDeckWaveform": """SELECT id FROM tracks
 WHERE analysis_json IS NOT NULL AND deck_waveform IS NULL
@@ -112,7 +117,7 @@ ON CONFLICT (id) DO UPDATE SET
     ready_at      = COALESCE(EXCLUDED.ready_at, tracks.ready_at)""",
     "ClearTrackAnalysis": """UPDATE tracks SET analysis_json = NULL, segments_json = NULL,
                  outro_energy = NULL, intro_energy = NULL,
-                 deck_waveform = NULL
+                 deck_waveform = NULL, native_envelope = NULL
 WHERE id = :id""",
     "SetTrackStatus": """UPDATE tracks SET status = :status, status_error = NULL WHERE id = :id""",
     "MarkTrackFailed": """UPDATE tracks SET status_error = :status_error WHERE id = :id""",
@@ -390,6 +395,33 @@ class Queries:
         row = cur.fetchone()
         cur.close()
         return None if row is None else models.GetTrackSummaryRow._from_row(row)
+
+    def get_track_native_envelope(self, id):
+        """`GetTrackNativeEnvelope` (:scalar) -> Any | None"""
+        params = {
+            "id": encode(id, "TEXT", self._dialect),
+        }
+        cur = self._execute("GetTrackNativeEnvelope", params)
+        row = cur.fetchone()
+        cur.close()
+        return None if row is None else decode(row[0], "JSONDOC")
+
+    def set_track_native_envelope(self, native_envelope, id):
+        """`SetTrackNativeEnvelope` (:exec) -> None"""
+        params = {
+            "native_envelope": encode(native_envelope, "JSONDOC", self._dialect),
+            "id": encode(id, "TEXT", self._dialect),
+        }
+        cur = self._execute("SetTrackNativeEnvelope", params)
+        cur.close()
+
+    def list_tracks_missing_native_envelope(self):
+        """`ListTracksMissingNativeEnvelope` (:many) -> list[ListTracksMissingNativeEnvelopeRow]"""
+        params = {}
+        cur = self._execute("ListTracksMissingNativeEnvelope", params)
+        rows = cur.fetchall()
+        cur.close()
+        return [models.ListTracksMissingNativeEnvelopeRow._from_row(r) for r in rows]
 
     def set_track_deck_waveform(self, deck_waveform, id):
         """`SetTrackDeckWaveform` (:exec) -> None"""

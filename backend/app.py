@@ -343,6 +343,19 @@ def create_app(run_ingestion=True, database=None, warmup_async=False):
         if hit is not None:
             return jsonify(hit)
 
+        # The stored native envelope answers any grid BPM exactly, because the
+        # sampled points do not depend on the grid — only the timing scalars
+        # do, and those scale by a ratio. That turns the grid-variant request a
+        # drop makes into a small row read instead of pulling the analysis
+        # blob and downsampling it again.
+        if points == config.TIMELINE_WAVEFORM_POINTS:
+            with database.reading() as q:
+                native = q.get_track_native_envelope(id=tid)
+            scaled = waveforms.rescale_envelope(native, bpm)
+            if scaled is not None:
+                cache.put(tid, points, bpm, scaled)
+                return jsonify(scaled)
+
         def load():
             with database.reading() as q:
                 return q.get_track_analysis(id=tid)

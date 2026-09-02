@@ -37,6 +37,29 @@ def envelope(analysis, points, bpm=None):
     }
 
 
+def rescale_envelope(native, bpm=None):
+    """A stored native envelope, presented at `bpm`.
+
+    envelope() samples `points` from the analysis frames by index, which does
+    not depend on the grid the track is stretched to — only the timing scalars
+    beside them do, all by the same ratio. So this reproduces
+    ``envelope(analysis, points, bpm)`` exactly from a stored native result,
+    without reading the analysis at all.
+    """
+    if not native:
+        return None
+    ratio = (bpm / native["bpm"]) if bpm else 1.0
+    if ratio == 1.0:
+        return dict(native)
+    return {
+        "points": native["points"],
+        "duration_s": native["duration_s"] / ratio,
+        "hop_dur": native["hop_dur"] / ratio,
+        "beat_grid": [b / ratio for b in native["beat_grid"]],
+        "bpm": native["bpm"] * ratio,
+    }
+
+
 class WaveformCache:
     """Thread-safe (track_id, points, bpm) -> envelope.
 

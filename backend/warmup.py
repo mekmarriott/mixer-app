@@ -125,9 +125,11 @@ class Warmup:
         with self.database.reading() as q:
             missing_energy = [r.id for r in q.list_tracks_missing_energies()]
             missing_wf = [r.id for r in q.list_tracks_missing_deck_waveform()]
-        wanted = list(dict.fromkeys(missing_energy + missing_wf))
+            missing_env = [r.id for r in q.list_tracks_missing_native_envelope()]
+        wanted = list(dict.fromkeys(missing_energy + missing_wf + missing_env))
         need_energy = set(missing_energy)
         need_wf = set(missing_wf)
+        need_env = set(missing_env)
         pending = wanted[:ENERGY_BACKFILL_MAX_ROWS]
         deadline = time.time() + ENERGY_BACKFILL_SECONDS
         done = 0
@@ -152,7 +154,14 @@ class Warmup:
                         analysis, config.DECK_WAVEFORM_POINTS)["points"]
                 except (KeyError, IndexError, TypeError, ValueError):
                     deck_wf = None
-            if energies is None and deck_wf is None:
+            native_env = None
+            if tid in need_env:
+                try:
+                    native_env = waveforms.envelope(
+                        analysis, config.TIMELINE_WAVEFORM_POINTS)
+                except (KeyError, IndexError, TypeError, ValueError):
+                    native_env = None
+            if energies is None and deck_wf is None and native_env is None:
                 continue
             with self.database.writing() as q:
                 if energies is not None:
@@ -160,6 +169,9 @@ class Warmup:
                                          intro_energy=energies[1])
                 if deck_wf is not None:
                     q.set_track_deck_waveform(id=tid, deck_waveform=deck_wf)
+                if native_env is not None:
+                    q.set_track_native_envelope(id=tid,
+                                                native_envelope=native_env)
             done += 1
         if pending:
             self._set(message=f"Ready (stored energies for {done} of "

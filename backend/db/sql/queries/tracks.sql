@@ -61,6 +61,19 @@ SELECT id, name, artist, genre, license,
        outro_energy, intro_energy
 FROM tracks WHERE id = :id;
 
+-- name: GetTrackNativeEnvelope :scalar
+-- columns: native_envelope JSONDOC
+SELECT native_envelope FROM tracks WHERE id = :id;
+
+-- name: SetTrackNativeEnvelope :exec
+UPDATE tracks SET native_envelope = :native_envelope WHERE id = :id;
+
+-- name: ListTracksMissingNativeEnvelope :many
+-- columns: id TEXT
+SELECT id FROM tracks
+WHERE analysis_json IS NOT NULL AND native_envelope IS NULL
+ORDER BY id;
+
 -- name: SetTrackDeckWaveform :exec
 UPDATE tracks SET deck_waveform = :deck_waveform WHERE id = :id;
 
@@ -129,7 +142,7 @@ ON CONFLICT (id) DO UPDATE SET
 -- name: ClearTrackAnalysis :exec
 UPDATE tracks SET analysis_json = NULL, segments_json = NULL,
                  outro_energy = NULL, intro_energy = NULL,
-                 deck_waveform = NULL
+                 deck_waveform = NULL, native_envelope = NULL
 WHERE id = :id;
 
 -- name: SetTrackStatus :exec

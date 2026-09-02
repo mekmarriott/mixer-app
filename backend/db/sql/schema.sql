@@ -65,7 +65,16 @@ CREATE TABLE IF NOT EXISTS tracks (
     -- row, twenty rows to a response. WaveformCache holds these too, but it is
     -- an in-process dict: cold on every new serverless instance, which is
     -- exactly when a first visitor is waiting.
-    deck_waveform JSONDOC
+    deck_waveform JSONDOC,
+    -- The full envelope() result at native tempo, TIMELINE_WAVEFORM_POINTS long.
+    --
+    -- Stored whole rather than as points alone because the timing metadata
+    -- beside them — duration, hop, beat grid — is what makes it reusable: the
+    -- sampled points do not depend on the grid a track is stretched to, only
+    -- those scalars do, and they scale by a ratio. So one stored native
+    -- envelope answers a request at ANY grid BPM exactly, not approximately,
+    -- and the analysis blob is read at ingest instead of per request.
+    native_envelope JSONDOC
 );
 
 CREATE TABLE IF NOT EXISTS variants (
