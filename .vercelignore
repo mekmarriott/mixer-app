@@ -15,3 +15,12 @@ __pycache__/
 
 # Ingest-only dependencies must not be installed for the serving function.
 requirements-ingest.txt
+
+# Local-only working directories. None of these is in the repository, so a
+# git-triggered deployment never sees them — but `vercel build`/`vercel deploy`
+# bundle the working directory as-is, where the agent worktrees alone are 1.6 GB
+# against a 500 MB function limit. Listing them keeps a local build honest.
+.claude/
+.vercel/
+data-e2e/
+.git/
