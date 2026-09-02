@@ -13,8 +13,8 @@
 
 ### Functional
 - [ ] **P1-01** Jamendo pull returns only tracks with `audiodownload_allowed=true`
-- [ ] **P1-02** Every ingested track has cached BPM, key, and beat-grid data after the Essentia pass
-- [ ] **P1-03** Segmentation produces labeled sections (intro/verse/build/drop/breakdown/outro) for every track
+- [ ] **P1-02** Every **analysed** track has cached BPM, key, and beat-grid data after the Essentia pass (tracks refused at the licence gate are never analysed — see P1-08b)
+- [ ] **P1-03** Segmentation produces labeled sections (intro/verse/build/drop/breakdown/outro) for every **analysed** track
 - [ ] **P1-04** Prefix-sum arrays are computed per track and return correct aggregate values for an arbitrary window in O(1) (spot-check against a brute-force sum)
 - [ ] **P1-05** BPM-grid variants are rendered for every grid point within tolerance, per track, per genre bucket
 - [ ] **P1-06** Rescaled beat-grid/segment data for each variant matches the expected stretch ratio (not re-run through Essentia — verify no duplicate analysis calls per variant)
@@ -22,6 +22,7 @@
 ### Compliance [`requirements.md` §1, §2]
 - [ ] **P1-07** Every ingested track has its specific CC license variant stored (BY / BY-NC / BY-SA / BY-ND / BY-NC-SA / BY-NC-ND) — no track left blank or defaulted
 - [ ] **P1-08** Tracks tagged **ND** are hard-excluded from the BPM-variant rendering step — verify zero stretched-variant files exist for any ND-tagged track
+- [ ] **P1-08b** ND tracks are refused **before their audio is downloaded**, not after: the licence is known from the metadata request, so an unusable track costs one small request rather than a download, an analysis pass and a variant set. The licence variant is still recorded (P1-07), and the decision is not re-made on a later run
 - [ ] **P1-09** Tracks tagged **SA** are flagged distinctly in the DB for downstream export-license handling
 - [ ] **P1-10** Tracks tagged **NC** are flagged distinctly in the DB for downstream commercial gating
 

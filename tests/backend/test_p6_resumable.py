@@ -57,9 +57,9 @@ class ResumableCase(unittest.TestCase):
         real = jamendo.fetch_track
         calls = []
 
-        def spy(entry, mode):
+        def spy(entry, mode, **kw):
             calls.append(entry["id"])
-            return real(entry, mode)
+            return real(entry, mode, **kw)
         return mock.patch.object(jamendo, "fetch_track", spy), calls
 
 

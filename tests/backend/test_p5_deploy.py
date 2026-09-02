@@ -55,8 +55,13 @@ class TestBlobStore(unittest.TestCase):
         existing fixture masters and variants are reachable by key."""
         with read() as q:
             summaries = q.list_track_summaries()
-            keys = [(t.id, q.get_track(id=t.id).audio_key) for t in summaries]
+            keys = [(t.id, q.get_track(id=t.id).audio_key)
+                    for t in summaries if t.mixable]
+        self.assertTrue(keys)
         for tid, key in keys:
+            # Unmixable tracks are skipped before download (LIC-01), so they
+            # have no master and no key — by design, not by omission.
+            self.assertIsNotNone(key, tid)
             self.assertTrue(self.store.exists(key),
                             f"{tid} master missing at {key}")
 
@@ -388,13 +393,22 @@ class TestPublisherPlanning(unittest.TestCase):
             def exists(self, key):
                 return False
 
+        with read() as q:
+            unmixable = {t.id for t in q.list_track_summaries() if not t.mixable}
+
         todo, skipped = publish.plan(self.database, Missing(root=self.tmp), self.entries)
-        self.assertEqual(skipped, [])
-        self.assertEqual(len(todo), len(self.entries))
+
+        # Every track that HAS audio is queued again, because none of it is
+        # reachable. Unmixable tracks are out of scope: they were refused at
+        # the licence gate and have no blob to be missing.
+        self.assertEqual({e["id"] for e in skipped}, unmixable)
+        self.assertEqual(len(todo), len(self.entries) - len(unmixable))
+        self.assertTrue(todo)
 
     def test_nd_track_is_done_without_variants(self):
-        """1005 is CC BY-ND: master only, by compliance design, so requiring
-        variants would make it permanently pending and re-ingest forever."""
+        """1005 is CC BY-ND: refused at the licence gate before download, so it
+        has neither variants NOR a master. Planning has to treat it as done, or
+        every run would queue it again and the skip would save nothing."""
         nd = [e for e in self.entries if e["id"] == "1005"]
         self.assertTrue(nd)
         _, skipped = publish.plan(self.database, self.store, nd)

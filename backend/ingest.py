@@ -54,6 +54,54 @@ def _usable(path):
     return path.exists() and path.stat().st_size > 44      # bigger than a WAV header
 
 
+def _reject_unmixable_license(meta):
+    """Refuse a track whose licence forbids the only thing we would do with it.
+
+    Called after the metadata request and before the audio download. ND
+    licences prohibit derivative works, and every BPM-grid variant is one
+    (requirements.md §2), so an ND track can never be mixed — it would be
+    downloaded, analysed, and then permanently excluded from the feature the
+    catalogue exists for.
+
+    Rejecting here is what makes that free. The licence is already known from
+    the metadata; the download is the expensive part and has not happened yet.
+    On the live catalogue 64 of 72 tracks are ND, so this is most of the work
+    and most of the metered API quota.
+    """
+    lic = licensing.parse_license(meta["license"])   # unknown licences raise
+    if lic["nd"]:
+        exc = jamendo.IncompatibleLicense(
+            f"{meta['id']}: {meta['license']} forbids derivative works, so no "
+            f"tempo-matched variant may be rendered — skipped before download")
+        exc.meta = meta
+        raise exc
+
+
+def _record_unmixable(catalog, tid, entry, meta):
+    """Store the licence decision without storing the track's audio.
+
+    The row is deliberately kept: requirements.md §1 wants the specific CC
+    variant recorded per track, and having it here means the decision is not
+    re-litigated — and the metadata request is not repeated — on every restart.
+
+    What it does NOT have is audio, analysis, segments or variants. It is
+    marked unmixable, so backend/deck.py leaves it out of the browse deck and
+    matching never offers it.
+    """
+    lic = licensing.parse_license(meta["license"])
+    catalog.save_ingested_track({
+        **meta, **lic,
+        "genre": meta.get("genre") or entry.get("genre", ""),
+        "mixable": False,
+        "audio_key": None,
+        "status": status.READY,        # nothing further will ever be done
+    })
+    catalog.advance_status(tid, status.READY)
+    return {"id": tid, "mixable": False, "grid_bpms": [], "bpm": None,
+            "camelot": None, "status": status.READY, "reused": [],
+            "skipped": "license", "license": meta["license"]}
+
+
 def ingest_track(database, entry, mode, timer=None, force=False):
     """Ingest one track, resuming from whatever is already done.
 
@@ -66,6 +114,14 @@ def ingest_track(database, entry, mode, timer=None, force=False):
 
     with database.reading() as q:
         existing = q.get_track(id=tid)
+
+    # Already known to be unmixable: nothing about a licence changes between
+    # runs, so re-requesting the metadata just to reach the same conclusion is
+    # pure waste. `force` still re-checks, in case the catalogue was wrong.
+    if not force and existing is not None and not existing.mixable:
+        return {"id": tid, "mixable": False, "grid_bpms": [], "bpm": None,
+                "camelot": None, "status": existing.status, "reused": ["license"],
+                "skipped": "license", "license": existing.license}
 
     try:
         # ---------------------------------------------------- fetch (network)
@@ -82,8 +138,12 @@ def ingest_track(database, entry, mode, timer=None, force=False):
             lic = licensing.parse_license(meta["license"])
             reused.append("fetch")
         else:
-            with timer.stage("fetch", tid):
-                meta, samples, sr = jamendo.fetch_track(entry, mode)
+            try:
+                with timer.stage("fetch", tid):
+                    meta, samples, sr = jamendo.fetch_track(
+                        entry, mode, accept=_reject_unmixable_license)
+            except jamendo.IncompatibleLicense as skip:
+                return _record_unmixable(catalog, tid, entry, skip.meta)
             # Unknown licenses raise here, before anything is persisted (P1-07).
             lic = licensing.parse_license(meta["license"])
             with timer.stage("persist_master", tid):

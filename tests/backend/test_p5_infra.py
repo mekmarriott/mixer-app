@@ -41,7 +41,12 @@ class TestInfraApp(unittest.TestCase):
     def test_inf_01_waveforms_precomputed_at_startup(self):
         """Every track has both UI envelopes warm before the server is ready —
         the deck never computes one on demand."""
-        ids = self._track_ids()
+        # Only tracks with analysis have an envelope to precompute. Unmixable
+        # tracks are refused at the licence gate before download (LIC-01), so
+        # they have no audio, no analysis and nothing to draw — and the deck
+        # never offers them either.
+        with read() as q:
+            ids = [t.id for t in q.list_track_summaries() if t.mixable]
         self.assertTrue(ids)
         for tid in ids:
             for pts in (config.DECK_WAVEFORM_POINTS, config.TIMELINE_WAVEFORM_POINTS):

@@ -88,13 +88,19 @@ def already_done(database, store, entry_id):
     """
     with database.reading() as q:
         t = q.get_track(id=str(entry_id))
-        if not t or not t.audio_key:
+        if not t:
+            return False
+        # Unmixable tracks are refused at the licence gate before anything is
+        # downloaded (LIC-01), so they have no master and never will. This has
+        # to be decided BEFORE the audio_key check, or every planning run would
+        # queue them again and the skip would save nothing.
+        if not t.mixable:
+            return True
+        if not t.audio_key:
             return False
         variants = q.list_variants_for_track(track_id=str(entry_id))
     if not store.exists(t.audio_key):
         return False
-    if not t.mixable:
-        return True                      # ND: master only, by design
     if not variants:
         return False
     return all(store.exists(v.object_key) for v in variants)

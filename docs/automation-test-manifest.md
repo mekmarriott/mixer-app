@@ -17,7 +17,7 @@ grep -rhoE "P[1-4]-[0-9]{2}" tests/ | sort -u
 
 | Suite | Runner | Count | Runs in | What it is for |
 |---|---|---|---|---|
-| **Backend** | `unittest` (stdlib) | 252 | ~13 s | Pipeline, compliance gates, API contract, startup precompute and DB concurrency. Builds a real 5-track fixture catalog through one full ingestion. |
+| **Backend** | `unittest` (stdlib) | 266 | ~8 s | Pipeline, compliance gates, API contract, startup precompute and DB concurrency. Builds a real 5-track fixture catalog through one full ingestion. |
 | **Frontend logic** | `node:test` (stdlib) | 76 | <1 s | The pure interaction modules (`state`, `align`, `crossfade`, `navbar`, `deck`, `attribution`, `boot`) — no DOM, no WebAudio. |
 | **Browser** | Playwright + Chromium | 32 | ~57 s | What the other two structurally cannot reach: native drag-and-drop, canvas pixels, the WebAudio clock, and real network behaviour. |
 | **Manual** | a human with ears | 1 | — | Perceptual judgement only. |
@@ -160,6 +160,11 @@ which predates them.
 | INF-05 | Zero state browses by genre within a cap; no scores, ND still listed | Backend | `test_inf_05_deck_groups_by_genre_within_cap`, `..._zero_state_carries_no_scores`, `..._caps_tracks_per_genre`, `..._largest_genre_leads`, `..._nd_tracks_are_listed_not_hidden` |
 | INF-06 | Popularity orders the deck when present, deterministically otherwise | Backend | `test_inf_06_popularity_orders_when_present`, `..._falls_back_to_a_deterministic_shuffle`, `..._partial_popularity_ranks_known_values_first` |
 | MIX-07 | The overlap check uses VARIANT durations, not native | Backend | `test_mix_07_variant_and_native_durations_actually_differ`, `..._transport_reports_the_variant_duration`, `..._a_placement_legal_by_variant_length_is_accepted` |
+| LIC-01 | ND tracks are refused before any audio is fetched | Backend | `test_lic_01_no_audio_is_produced_for_an_nd_track`, `..._a_usable_track_is_still_ingested_fully`, `..._every_nd_variant_is_rejected`, `..._non_nd_restrictions_do_not_block_ingestion` |
+| LIC-02 | The licence is still recorded; no audio, analysis or variants are | Backend | `test_lic_02_the_licence_is_still_recorded`, `..._no_variants_exist_for_a_skipped_track`, `..._a_skipped_track_carries_no_audio_key` |
+| LIC-03 | The decision is not re-made on a later run; `force` re-examines | Backend | `test_lic_03_the_decision_is_not_relitigated_on_restart`, `..._force_re_examines_the_licence` |
+| LIC-04 | The gate runs before the download, and explains itself | Backend | `test_lic_04_the_gate_runs_before_the_download_not_after`, `..._the_hook_is_optional`, `..._the_refusal_says_why` |
+| LIC-05 | Unknown licences still raise; skipped tracks stay out of the deck | Backend | `test_lic_05_an_unknown_licence_still_raises`, `..._skipped_tracks_are_hidden_from_the_deck` |
 | ISO-01 | The application's database URL never reaches the suite | Backend | `test_iso_01_application_database_url_is_ignored`, `..._isolate_overrides_a_configured_application_url` |
 | ISO-02 | A non-test database is refused, with a message that explains | Backend | `test_iso_02_a_dedicated_test_database_is_accepted`, `..._a_non_test_database_is_refused`, `..._the_refusal_explains_the_fix`, `..._blank_and_whitespace_mean_sqlite` |
 | ISO-03 | Every path is redirected into the test directory | Backend | `test_iso_03_isolate_redirects_every_path` |
@@ -274,6 +279,11 @@ which predates them.
 | INF-05 | Zero state browses by genre within a cap; no scores, ND still listed | Backend | `test_inf_05_deck_groups_by_genre_within_cap`, `..._zero_state_carries_no_scores`, `..._caps_tracks_per_genre`, `..._largest_genre_leads`, `..._nd_tracks_are_listed_not_hidden` |
 | INF-06 | Popularity orders the deck when present, deterministically otherwise | Backend | `test_inf_06_popularity_orders_when_present`, `..._falls_back_to_a_deterministic_shuffle`, `..._partial_popularity_ranks_known_values_first` |
 | MIX-07 | The overlap check uses VARIANT durations, not native | Backend | `test_mix_07_variant_and_native_durations_actually_differ`, `..._transport_reports_the_variant_duration`, `..._a_placement_legal_by_variant_length_is_accepted` |
+| LIC-01 | ND tracks are refused before any audio is fetched | Backend | `test_lic_01_no_audio_is_produced_for_an_nd_track`, `..._a_usable_track_is_still_ingested_fully`, `..._every_nd_variant_is_rejected`, `..._non_nd_restrictions_do_not_block_ingestion` |
+| LIC-02 | The licence is still recorded; no audio, analysis or variants are | Backend | `test_lic_02_the_licence_is_still_recorded`, `..._no_variants_exist_for_a_skipped_track`, `..._a_skipped_track_carries_no_audio_key` |
+| LIC-03 | The decision is not re-made on a later run; `force` re-examines | Backend | `test_lic_03_the_decision_is_not_relitigated_on_restart`, `..._force_re_examines_the_licence` |
+| LIC-04 | The gate runs before the download, and explains itself | Backend | `test_lic_04_the_gate_runs_before_the_download_not_after`, `..._the_hook_is_optional`, `..._the_refusal_says_why` |
+| LIC-05 | Unknown licences still raise; skipped tracks stay out of the deck | Backend | `test_lic_05_an_unknown_licence_still_raises`, `..._skipped_tracks_are_hidden_from_the_deck` |
 | ISO-01 | The application's database URL never reaches the suite | Backend | `test_iso_01_application_database_url_is_ignored`, `..._isolate_overrides_a_configured_application_url` |
 | ISO-02 | A non-test database is refused, with a message that explains | Backend | `test_iso_02_a_dedicated_test_database_is_accepted`, `..._a_non_test_database_is_refused`, `..._the_refusal_explains_the_fix`, `..._blank_and_whitespace_mean_sqlite` |
 | ISO-03 | Every path is redirected into the test directory | Backend | `test_iso_03_isolate_redirects_every_path` |

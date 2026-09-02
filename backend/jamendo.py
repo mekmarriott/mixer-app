@@ -44,6 +44,15 @@ class TrackSourceError(Exception):
     pass
 
 
+class IncompatibleLicense(TrackSourceError):
+    """The track's licence forbids what this app would do with the audio.
+
+    Raised from the `accept` hook BEFORE the download, so an unusable track
+    costs one cheap metadata request rather than a multi-megabyte transfer,
+    an analysis pass and a full set of rendered variants.
+    """
+
+
 def validate_source_meta(meta):
     """Hard gate (P1-01): only tracks whose source permits raw-audio download
     may enter the pipeline. Applied to every provider's metadata."""
@@ -53,15 +62,23 @@ def validate_source_meta(meta):
     return meta
 
 
-def fetch_track(entry, mode):
+def fetch_track(entry, mode, accept=None):
+    """Metadata + decoded audio for one track.
+
+    `accept(meta)` is called once the metadata is known and BEFORE the audio is
+    downloaded. It may raise (see IncompatibleLicense) to abandon the track
+    while it is still free to do so. Licence and download permission both come
+    from that metadata, so every gate belongs at this point — after one small
+    request, before the expensive one.
+    """
     if mode == "offline":
-        return _fetch_offline(entry)
+        return _fetch_offline(entry, accept)
     if mode == "jamendo":
-        return _fetch_jamendo(entry)
+        return _fetch_jamendo(entry, accept)
     raise TrackSourceError(f"Unknown source mode: {mode}")
 
 
-def _fetch_offline(entry):
+def _fetch_offline(entry, accept=None):
     meta = {
         "id": str(entry["id"]),
         "name": entry["name"],
@@ -71,6 +88,10 @@ def _fetch_offline(entry):
         "audiodownload_allowed": True,
     }
     validate_source_meta(meta)
+    if accept is not None:
+        # Same gate as the network path, so tests exercise the real ordering:
+        # nothing is synthesised for a track that will be rejected.
+        accept(meta)
     samples = synth.synthesize(entry)
     return meta, samples, config.SAMPLE_RATE
 
@@ -190,7 +211,7 @@ def decode_to_samples(encoded, sr=None):
     return pcm16_to_float(raw)
 
 
-def _fetch_jamendo(entry):  # pragma: no cover - requires network
+def _fetch_jamendo(entry, accept=None):  # pragma: no cover - requires network
     t = fetch_track_metadata(entry["id"], require_client_id())
     meta = {"id": str(t["id"]), "name": t["name"], "artist": t["artist_name"],
             "genre": entry.get("genre", "house"),
@@ -198,6 +219,8 @@ def _fetch_jamendo(entry):  # pragma: no cover - requires network
             "audiodownload_allowed": bool(t.get("audiodownload_allowed", False)),
             "source_url": t.get("shareurl", "")}
     validate_source_meta(meta)                       # P1-01, before any download
+    if accept is not None:
+        accept(meta)                                 # licence gate, same reason
 
     url = t.get("audiodownload")
     if not url:

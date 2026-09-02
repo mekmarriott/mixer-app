@@ -28,9 +28,16 @@ class TestP1Ingestion(unittest.TestCase):
 
     # ------------------------------------------------------------- P1-02
     def test_p1_02_cached_bpm_key_beatgrid(self):
-        """P1-02: every ingested track has cached BPM, key, beat grid."""
+        """P1-02: every ANALYSED track has cached BPM, key, beat grid.
+
+        Scoped to mixable tracks: an ND licence forbids the variants that
+        analysis exists to produce, so those tracks are recorded from their
+        metadata and never downloaded or analysed (LIC-01). Asserting analysis
+        for them would be asserting work we deliberately do not do.
+        """
         with read() as q:
-            tracks = q.list_tracks()
+            tracks = [t for t in q.list_tracks() if t.mixable]
+        self.assertTrue(tracks)
         for t in tracks:
             a = t.analysis_json
             self.assertIsNotNone(a, t.id)
@@ -51,10 +58,12 @@ class TestP1Ingestion(unittest.TestCase):
 
     # ------------------------------------------------------------- P1-03
     def test_p1_03_segmentation_labels(self):
-        """P1-03: labeled sections exist for every track, from the known set."""
+        """P1-03: labeled sections exist for every ANALYSED track (see P1-02
+        on why unmixable tracks are excluded)."""
         allowed = {"intro", "verse", "build", "drop", "breakdown", "outro", "full"}
         with read() as q:
-            tracks = q.list_tracks()
+            tracks = [t for t in q.list_tracks() if t.mixable]
+        self.assertTrue(tracks)
         for t in tracks:
             segs = t.segments_json
             self.assertGreaterEqual(len(segs), 3, t.id)
