@@ -69,7 +69,7 @@ PGLOG    := $(PGDATA)/server.log
 
 PORT     ?= 5050
 
-.PHONY: help test test-fast test-pg test-browser check serve ingest ingest-dry env \
+.PHONY: help test test-fast test-pg test-smoke test-browser check serve ingest ingest-dry env \
         db-up db-down db-reset db-shell db-url wait-pg up down status \
         clean-pg clean-variants clean-audio clean-all deps
 
@@ -78,6 +78,7 @@ help:
 	@echo "  make test            backend + frontend suites (SQLite)"
 	@echo "  make test-fast       same, skipping the browser suite"
 	@echo "  make test-pg         DB-layer suite against local PostgreSQL"
+	@echo "  make test-smoke      boot the service against PostgreSQL (synthetic catalog)"
 	@echo "  make test-browser    Playwright suite only"
 	@echo "  make check           everything: SQLite, PostgreSQL, browser"
 	@echo
@@ -159,12 +160,26 @@ db-reset: db-up
 	@dropdb -h 127.0.0.1 -p $(PGPORT) -U "$(PGUSER)" --if-exists "$(PGTESTDB)"
 	@createdb -h 127.0.0.1 -p $(PGPORT) -U "$(PGUSER)" "$(PGTESTDB)"
 
+# The service smoke test: boots the real app against PostgreSQL with a
+# synthetic catalog — schema, ingestion, warmup, endpoints — which is what CI
+# runs and what nothing else covers end to end. Its own database, because it
+# drops the schema to guarantee a genuine first boot.
+PGSMOKEDB ?= djmixer_smoke
+PG_SMOKE_URL := postgresql://$(PGUSER)@127.0.0.1:$(PGPORT)/$(PGSMOKEDB)
+
+test-smoke: deps db-up
+	@dropdb -h 127.0.0.1 -p $(PGPORT) -U "$(PGUSER)" --if-exists "$(PGSMOKEDB)"
+	@createdb -h 127.0.0.1 -p $(PGPORT) -U "$(PGUSER)" "$(PGSMOKEDB)"
+	@echo "== Service smoke test (PostgreSQL + synthetic catalog) =="
+	@DJMIXER_SMOKE_DATABASE_URL="$(PG_SMOKE_URL)" "$(PY)" -m unittest discover \
+	  -s tests/backend -t tests/backend -p "test_p7_*.py"
+
 _test-backend:
 	@cd tests/backend && "$(PY)" -m unittest discover -s .
 
-check: test-fast test-pg test-browser
+check: test-fast test-pg test-smoke test-browser
 	@echo
-	@echo "All suites passed (SQLite, PostgreSQL, browser)."
+	@echo "All suites passed (SQLite, PostgreSQL, service smoke, browser)."
 
 # ---------------------------------------------------------------------------
 # Local PostgreSQL

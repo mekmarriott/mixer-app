@@ -130,6 +130,42 @@ testing-document id, the suite and test that proves it, the remaining gap, and
 the one check that still needs a human with ears. It also records the SQLite
 concurrency defect the browser suite found (API-01) and how it was fixed.
 
+### Continuous integration
+
+`.github/workflows/ci.yml` runs every suite on push and pull request, in three
+jobs:
+
+| Job | What it runs |
+|---|---|
+| **Backend** | full suite on SQLite, the DB layer against a real PostgreSQL service, then the service smoke test |
+| **Frontend** | the `node:test` logic modules |
+| **Browser** | the Playwright suite against a server it starts itself |
+
+**No secrets, no network.** `config/tracks.json` ships in `jamendo` mode and
+would need a metered API key to boot, so every job points `DJMIXER_TRACKS` at a
+synthetic catalog (`mode: offline`) instead. That drives the same
+ingest → analyse → render → serve path deterministically and for free.
+
+CI also sets `DJMIXER_REQUIRE_ESSENTIA=1` and `DJMIXER_REQUIRE_RUBBERBAND=1`,
+and asserts both engines are live before running anything. A fallback is a
+*different* engine, not a slower one — without that gate a runner missing
+`rubberband` would quietly test the phase vocoder and still go green.
+
+The **service smoke test** (`tests/backend/test_p7_service.py`) is the one that
+boots the real application the way a deployment does — schema creation,
+ingestion, warmup, then the endpoints a browser calls — against PostgreSQL
+rather than SQLite. Nothing else covers that combination. Run it locally with:
+
+```bash
+make test-smoke          # brings up local Postgres, uses its own database
+```
+
+The browser job is currently **non-blocking** (`continue-on-error`). It runs in
+full and uploads its report, but four `delete-track` specs fail on main for a
+reason that predates the workflow — `buildChain()` adds a third track where it
+overlaps the first, and `check_overlaps` correctly returns 409. That line
+should come out as soon as those specs pass.
+
 ## Database
 
 Locally the backend uses a SQLite file under `data/`; no setup needed. All

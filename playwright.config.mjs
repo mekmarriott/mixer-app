@@ -5,10 +5,20 @@
 // network behaviour during interaction. Everything else stays in the faster
 // unittest / node:test suites — see the manifest for the full ID map.
 import { defineConfig, devices } from "@playwright/test";
+import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
+
+// The interpreter that runs the server under test. A local checkout has
+// .venv; CI installs into the runner's own Python and has none, so hardcoding
+// .venv/bin/python made the webServer fail to start there — which surfaces as
+// "Process from config.webServer exited early" rather than anything about a
+// missing interpreter. $PYTHON overrides both.
+const VENV_PYTHON = path.join(ROOT, ".venv", "bin", "python");
+const PYTHON = process.env.PYTHON
+  || (existsSync(VENV_PYTHON) ? VENV_PYTHON : "python3");
 
 // Deliberately NOT 5050: `python -m backend.app` uses that port, so a dev
 // server (or another working session) is usually already sitting on it. Its
@@ -79,7 +89,7 @@ export default defineConfig({
     // create_app() is invoked directly rather than via `python -m backend.app`
     // so the port can be chosen here without patching the backend.
     command:
-      `.venv/bin/python -c "from backend.app import create_app; ` +
+      `"${PYTHON}" -c "from backend.app import create_app; ` +
       `create_app().run(host='127.0.0.1', port=${PORT})"`,
     url: `${BASE_URL}/api/health`,
     // Must be ABSOLUTE. Ingestion stores file paths in SQLite as given, and
