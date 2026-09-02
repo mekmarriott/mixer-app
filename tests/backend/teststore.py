@@ -77,7 +77,13 @@ def isolate(config, tmp=None):
 
     # The important line: whatever config resolved at import from the
     # environment or .env.local is discarded in favour of the test's own store.
-    config.DATABASE_URL = test_database_url()
+    #
+    # `or ""` is load-bearing, not tidiness. config.database_url() treats None
+    # as "nothing was said, fall back to whatever the Supabase integration
+    # injected" (MIX_DB_POSTGRES_URL and friends), and empty-string as "local
+    # SQLite, explicitly". Assigning None here would hand the suite the
+    # production database through a variable this module never looks at.
+    config.DATABASE_URL = test_database_url() or ""
 
     config.ensure_dirs()
     return tmp

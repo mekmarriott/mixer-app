@@ -49,12 +49,46 @@ class TestStoreSelection(unittest.TestCase):
         tmp = None
         try:
             tmp = teststore.isolate(config)
-            self.assertIsNone(config.DATABASE_URL)
             self.assertTrue(config.database_url().startswith("sqlite:///"))
             self.assertIn(str(tmp), config.database_url())
         finally:
             (config.DATA_DIR, config.AUDIO_DIR, config.VARIANT_DIR,
              config.DB_PATH, config.DATABASE_URL) = saved
+            if tmp:
+                import shutil
+                shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_iso_01_isolate_beats_an_integration_injected_url(self):
+        """The guarantee is about the RESOLVED database, not one variable.
+
+        config.database_url() falls back to the URLs Vercel's Supabase
+        integration injects (MIX_DB_POSTGRES_URL and friends) so a deployment
+        needs no duplicated credential. Isolation has to survive that: leaving
+        DATABASE_URL unset here would hand the suite the production database
+        through a variable this module never reads.
+        """
+        os.environ.pop("DJMIXER_DATABASE_URL", None)
+        os.environ.pop(teststore.TEST_URL_VAR, None)
+        saved_env = {v: os.environ.get(v)
+                     for v in config.DATABASE_URL_FALLBACK_VARS}
+        saved = (config.DATA_DIR, config.AUDIO_DIR, config.VARIANT_DIR,
+                 config.DB_PATH, config.DATABASE_URL)
+        tmp = None
+        try:
+            for v in config.DATABASE_URL_FALLBACK_VARS:
+                os.environ[v] = "postgresql://prod.example.com:6543/postgres"
+            tmp = teststore.isolate(config)
+            self.assertTrue(config.is_local_sqlite(),
+                            f"isolation leaked to {config.database_url()!r}")
+            self.assertIn(str(tmp), config.database_url())
+        finally:
+            (config.DATA_DIR, config.AUDIO_DIR, config.VARIANT_DIR,
+             config.DB_PATH, config.DATABASE_URL) = saved
+            for v, val in saved_env.items():
+                if val is None:
+                    os.environ.pop(v, None)
+                else:
+                    os.environ[v] = val
             if tmp:
                 import shutil
                 shutil.rmtree(tmp, ignore_errors=True)

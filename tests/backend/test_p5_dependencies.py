@@ -35,7 +35,12 @@ class TestEssentiaEngine(unittest.TestCase):
         only by _analyze_essentia."""
         with read() as q:
             tracks = q.list_tracks()
-        for t in tracks:
+        # ND tracks are refused before download now, so they carry a row and no
+        # analysis. Assert over the ones that were analysed, and require that
+        # there ARE some — otherwise an empty catalog would pass silently.
+        analysed = [t for t in tracks if t.analysis_json]
+        self.assertTrue(analysed, "no track carries an analysis")
+        for t in analysed:
             a = t.analysis_json
             self.assertEqual(a["engine"], "essentia", t.id)
             self.assertIn("engine_version", a)
@@ -69,7 +74,9 @@ class TestEssentiaEngine(unittest.TestCase):
     def test_key_maps_into_camelot(self):
         with read() as q:
             tracks = q.list_tracks()
-        for t in tracks:
+        analysed = [t for t in tracks if t.analysis_json]
+        self.assertTrue(analysed, "no track carries an analysis")
+        for t in analysed:
             self.assertIn(t.analysis_json["key"]["camelot"],
                           set(analysis.CAMELOT.values()), t.id)
 
