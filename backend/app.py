@@ -28,10 +28,10 @@ a partial page.
 """
 from functools import wraps
 
-from flask import (Flask, abort, jsonify, request, send_file,
+from flask import (Flask, abort, jsonify, redirect, request, send_file,
                    send_from_directory)
 
-from . import config, dbguard, licensing, matching, transitions
+from . import config, dbguard, licensing, matching, storage, transitions
 from . import warmup as warmup_mod
 from . import waveforms
 from .db import Database
@@ -46,7 +46,11 @@ def create_app(run_ingestion=True, database=None, warmup_async=False):
     """warmup_async=False blocks until the catalog is ready (tests, CLI);
     True binds the port immediately and warms in the background (dev server)."""
     app = Flask(__name__, static_folder=None)
-    config.ensure_dirs()
+    store = storage.get_store()
+    # Only the local backend has a data directory to create. Under a remote
+    # store the filesystem is read-only (Vercel) and nothing here may write.
+    if isinstance(store, storage.LocalBlobStore):
+        config.ensure_dirs()
 
     base = database or Database.from_config().migrate()
     # Admission control sits above the engine so it applies to SQLite (which
@@ -57,7 +61,8 @@ def create_app(run_ingestion=True, database=None, warmup_async=False):
 
     cache = waveforms.WaveformCache()
     warm = warmup_mod.Warmup(database, cache)
-    app.config.update(DATABASE=database, WAVEFORMS=cache, WARMUP=warm)
+    app.config.update(DATABASE=database, WAVEFORMS=cache, WARMUP=warm,
+                      BLOB_STORE=store)
 
     if warmup_async:
         warm.start_async(run_ingestion=run_ingestion)
@@ -219,18 +224,44 @@ def create_app(run_ingestion=True, database=None, warmup_async=False):
     @app.get("/api/tracks/<tid>/audio")
     @needs_catalog
     def audio(tid):
+        """Redirect to the object store; never proxy the bytes.
+
+        Streaming audio through this handler would bill the transfer to the API
+        and hold a serverless function open for the whole download. It would
+        also hold a database admission permit for the duration of a multi-
+        megabyte transfer, which is exactly the stall dbguard exists to
+        prevent. The 302 sends the client straight to the CDN instead
+        (docs/infrastructure-plan.md §1.2).
+        """
         bpm = request.args.get("bpm", type=int)
         with database.reading() as q:
             t = q.get_track(id=tid)
             if not t:
                 abort(404)
             if bpm is None:
-                return send_file(t.audio_path, mimetype="audio/wav")
+                return redirect(store.url_for(t.audio_key), code=302)
             variants = q.list_variants_for_track(track_id=tid)
         for v in variants:
             if v.grid_bpm == bpm:
-                return send_file(v.path, mimetype="audio/wav")
+                return redirect(store.url_for(v.object_key), code=302)
         abort(404, f"No variant at {bpm} BPM (track may be ND-restricted)")
+
+    @app.get("/blobs/<path:key>")
+    def blob(key):
+        """Serve the local blob backend. Development and tests only — in
+        deployment the 302 above points at Vercel Blob/R2 and this route is
+        never reached. Deliberately not @needs_catalog and not DB-touching:
+        it is a static file read."""
+        try:
+            path = store.local_path(key)
+        except storage.BlobStoreError:
+            # Traversal attempt. The store refuses it; this is the only place
+            # a key arrives from a request rather than from ingestion, so it
+            # must answer 404 rather than leak the refusal as a 500.
+            abort(404)
+        if path is None or not path.is_file():
+            abort(404)
+        return send_file(path, mimetype="audio/wav", conditional=True)
 
     @app.get("/api/tracks/<tid>/recommendations")
     @needs_catalog

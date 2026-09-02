@@ -10,11 +10,11 @@ SELECT * FROM variants WHERE track_id = :track_id ORDER BY grid_bpm;
 SELECT * FROM variants ORDER BY track_id, grid_bpm;
 
 -- name: UpsertVariant :exec
-INSERT INTO variants (track_id, grid_bpm, ratio, path, duration_s)
-VALUES (:track_id, :grid_bpm, :ratio, :path, :duration_s)
+INSERT INTO variants (track_id, grid_bpm, ratio, object_key, duration_s)
+VALUES (:track_id, :grid_bpm, :ratio, :object_key, :duration_s)
 ON CONFLICT (track_id, grid_bpm) DO UPDATE SET
     ratio      = EXCLUDED.ratio,
-    path       = EXCLUDED.path,
+    object_key = EXCLUDED.object_key,
     duration_s = EXCLUDED.duration_s;
 
 -- name: DeleteVariantsForTrack :exec

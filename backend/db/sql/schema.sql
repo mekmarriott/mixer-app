@@ -24,7 +24,7 @@ CREATE TABLE IF NOT EXISTS tracks (
     native_bpm    REAL,
     camelot       TEXT,
     duration_s    REAL,
-    audio_path    TEXT,
+    audio_key     TEXT,
     analysis_json JSONDOC,
     segments_json JSONDOC,
     -- Ingestion progress. `status` is a HIGH-WATER MARK of completed work
@@ -45,7 +45,7 @@ CREATE TABLE IF NOT EXISTS variants (
     track_id   TEXT NOT NULL REFERENCES tracks (id) ON DELETE CASCADE,
     grid_bpm   INTEGER NOT NULL,
     ratio      REAL NOT NULL,
-    path       TEXT NOT NULL,
+    object_key TEXT NOT NULL,
     duration_s REAL NOT NULL,
     PRIMARY KEY (track_id, grid_bpm)
 );

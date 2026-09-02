@@ -38,12 +38,12 @@ ORDER BY id""",
     "GetTrackSegments": """SELECT segments_json FROM tracks WHERE id = :id""",
     "UpsertTrack": """INSERT INTO tracks (id, name, artist, genre, license, license_nd, license_sa,
                     license_nc, mixable, native_bpm, camelot, duration_s,
-                    audio_path, analysis_json, segments_json,
+                    audio_key, analysis_json, segments_json,
                     status, status_error, source_url,
                     fetched_at, analyzed_at, ready_at)
 VALUES (:id, :name, :artist, :genre, :license, :license_nd, :license_sa,
         :license_nc, :mixable, :native_bpm, :camelot, :duration_s,
-        :audio_path, :analysis_json, :segments_json,
+        :audio_key, :analysis_json, :segments_json,
         :status, :status_error, :source_url,
         :fetched_at, :analyzed_at, :ready_at)
 ON CONFLICT (id) DO UPDATE SET
@@ -58,7 +58,7 @@ ON CONFLICT (id) DO UPDATE SET
     native_bpm    = COALESCE(EXCLUDED.native_bpm, tracks.native_bpm),
     camelot       = COALESCE(EXCLUDED.camelot, tracks.camelot),
     duration_s    = COALESCE(EXCLUDED.duration_s, tracks.duration_s),
-    audio_path    = COALESCE(EXCLUDED.audio_path, tracks.audio_path),
+    audio_key    = COALESCE(EXCLUDED.audio_key, tracks.audio_key),
     analysis_json = COALESCE(EXCLUDED.analysis_json, tracks.analysis_json),
     segments_json = COALESCE(EXCLUDED.segments_json, tracks.segments_json),
     status        = EXCLUDED.status,
@@ -81,11 +81,11 @@ ORDER BY id""",
     "DeleteTrack": """DELETE FROM tracks WHERE id = :id""",
     "ListVariantsForTrack": """SELECT * FROM variants WHERE track_id = :track_id ORDER BY grid_bpm""",
     "ListAllVariants": """SELECT * FROM variants ORDER BY track_id, grid_bpm""",
-    "UpsertVariant": """INSERT INTO variants (track_id, grid_bpm, ratio, path, duration_s)
-VALUES (:track_id, :grid_bpm, :ratio, :path, :duration_s)
+    "UpsertVariant": """INSERT INTO variants (track_id, grid_bpm, ratio, object_key, duration_s)
+VALUES (:track_id, :grid_bpm, :ratio, :object_key, :duration_s)
 ON CONFLICT (track_id, grid_bpm) DO UPDATE SET
     ratio      = EXCLUDED.ratio,
-    path       = EXCLUDED.path,
+    object_key = EXCLUDED.object_key,
     duration_s = EXCLUDED.duration_s""",
     "DeleteVariantsForTrack": """DELETE FROM variants WHERE track_id = :track_id""",
 }
@@ -198,7 +198,7 @@ class Queries:
         cur.close()
         return None if row is None else decode(row[0], "JSONDOC")
 
-    def upsert_track(self, id, name, artist, genre, license, license_nd, license_sa, license_nc, mixable, native_bpm, camelot, duration_s, audio_path, analysis_json, segments_json, status, status_error, source_url, fetched_at, analyzed_at, ready_at):
+    def upsert_track(self, id, name, artist, genre, license, license_nd, license_sa, license_nc, mixable, native_bpm, camelot, duration_s, audio_key, analysis_json, segments_json, status, status_error, source_url, fetched_at, analyzed_at, ready_at):
         """`UpsertTrack` (:exec) -> None"""
         params = {
             "id": encode(id, "TEXT", self._dialect),
@@ -213,7 +213,7 @@ class Queries:
             "native_bpm": encode(native_bpm, "REAL", self._dialect),
             "camelot": encode(camelot, "TEXT", self._dialect),
             "duration_s": encode(duration_s, "REAL", self._dialect),
-            "audio_path": encode(audio_path, "TEXT", self._dialect),
+            "audio_key": encode(audio_key, "TEXT", self._dialect),
             "analysis_json": encode(analysis_json, "JSONDOC", self._dialect),
             "segments_json": encode(segments_json, "JSONDOC", self._dialect),
             "status": encode(status, "TEXT", self._dialect),
@@ -323,13 +323,13 @@ class Queries:
         cur.close()
         return [models.Variant._from_row(r) for r in rows]
 
-    def upsert_variant(self, track_id, grid_bpm, ratio, path, duration_s):
+    def upsert_variant(self, track_id, grid_bpm, ratio, object_key, duration_s):
         """`UpsertVariant` (:exec) -> None"""
         params = {
             "track_id": encode(track_id, "TEXT", self._dialect),
             "grid_bpm": encode(grid_bpm, "INTEGER", self._dialect),
             "ratio": encode(ratio, "REAL", self._dialect),
-            "path": encode(path, "TEXT", self._dialect),
+            "object_key": encode(object_key, "TEXT", self._dialect),
             "duration_s": encode(duration_s, "REAL", self._dialect),
         }
         cur = self._execute("UpsertVariant", params)

@@ -19,7 +19,6 @@ import tempfile
 from pathlib import Path
 
 import numpy as np
-from scipy import signal as sp_signal
 
 from . import config
 from .audio_io import load_wav, save_wav

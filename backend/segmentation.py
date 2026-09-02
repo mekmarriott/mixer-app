@@ -7,7 +7,11 @@ low-energy interior, drop = high-energy interior). Non-overlapping by
 construction — used only as a coarse region filter; precise transition
 candidates come from sliding windows (transitions.py)."""
 import numpy as np
-from scipy import signal as sp_signal
+
+# scipy is imported lazily inside segment(). transitions.py imports the
+# ENTRY_ROLES/EXIT_ROLES constants from this module, so a top-level scipy
+# import would pull the scipy tree into the API cold start for the sake of two
+# tuples. Only segment() (ingest-time) needs it. See infrastructure-plan §1.3.
 
 
 def _smooth(x, k):
@@ -30,6 +34,8 @@ def segment(analysis, min_segments=4):
     # Novelty = |derivative| of the smoothed combined feature.
     novelty = np.abs(np.gradient(feat))
     novelty = _smooth(novelty, int(0.5 / hop_dur))
+
+    from scipy import signal as sp_signal      # lazy: see module header
 
     min_gap = int(3.0 / hop_dur)   # sections at least 3s apart
     peaks, props = sp_signal.find_peaks(novelty, distance=max(1, min_gap))

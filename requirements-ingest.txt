@@ -1,0 +1,41 @@
+# Local ingestion + full test suite. THIS is the file to install for
+# development; requirements.txt alone is the serving subset and is not enough
+# to run the app or the tests.
+#
+#   python3 -m venv .venv && .venv/bin/pip install -r requirements-ingest.txt
+#
+# NOT installed on Vercel — .vercelignore excludes it and the serving function
+# installs requirements.txt only. Ingestion runs on a developer machine
+# (docs/infrastructure-plan.md §5.3), where there is no bundle-size ceiling, no
+# function timeout, and the two required binaries are available.
+#
+# Also needed on PATH (not installable from PyPI):
+#   ffmpeg      -> backend/jamendo.py   decodes Jamendo MP3s    (brew install ffmpeg)
+#   rubberband  -> backend/stretch.py   time-stretch, R3 engine (brew install rubberband)
+
+-r requirements.txt
+
+# Fallback DSP for analysis and time-stretch. 105 MB installed, which is
+# exactly why it is here and not in the serving manifest.
+scipy==1.15.0
+
+# jamendo mode only (config/tracks.json "mode": "jamendo")
+requests==2.32.3
+
+# Production analysis engine (BPM / beat grid / key / frame features).
+#
+# AGPL-3.0 — installing it is a licensing decision as well as a setup step; see
+# docs/requirements.md §4. It lives here rather than in requirements.txt for
+# that reason as much as for size: AGPL's copyleft is triggered by network use,
+# and this never runs on the network-facing server.
+#
+# Pinned rather than left floating because the fallback is silent:
+# 2.1b6.dev1389 is the newest release publishing macOS arm64 + Linux x86_64
+# wheels for CPython 3.9-3.13, while the newer 2.1b6.dev1438 ships cp314 wheels
+# only, so an unpinned install quietly drops to the numpy/scipy engine on every
+# other interpreter and changes every detected BPM and key. Set
+# DJMIXER_REQUIRE_ESSENTIA=1 to make that loud.
+#
+# rubberband is a CLI, not a package, so it cannot be pinned here — the
+# equivalent guard is DJMIXER_REQUIRE_RUBBERBAND=1.
+essentia==2.1b6.dev1389

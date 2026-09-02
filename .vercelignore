@@ -1,0 +1,17 @@
+# Keep the serverless bundle small — it competes with numpy for a 250 MB
+# uncompressed limit (docs/infrastructure-plan.md §1.3).
+
+tests/
+docs/
+data/
+blobs/
+*.md
+!README.md
+
+run_tests.sh
+.venv/
+node_modules/
+__pycache__/
+
+# Ingest-only dependencies must not be installed for the serving function.
+requirements-ingest.txt

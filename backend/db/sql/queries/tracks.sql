@@ -47,12 +47,12 @@ SELECT segments_json FROM tracks WHERE id = :id;
 -- name: UpsertTrack :exec
 INSERT INTO tracks (id, name, artist, genre, license, license_nd, license_sa,
                     license_nc, mixable, native_bpm, camelot, duration_s,
-                    audio_path, analysis_json, segments_json,
+                    audio_key, analysis_json, segments_json,
                     status, status_error, source_url,
                     fetched_at, analyzed_at, ready_at)
 VALUES (:id, :name, :artist, :genre, :license, :license_nd, :license_sa,
         :license_nc, :mixable, :native_bpm, :camelot, :duration_s,
-        :audio_path, :analysis_json, :segments_json,
+        :audio_key, :analysis_json, :segments_json,
         :status, :status_error, :source_url,
         :fetched_at, :analyzed_at, :ready_at)
 ON CONFLICT (id) DO UPDATE SET
@@ -71,7 +71,7 @@ ON CONFLICT (id) DO UPDATE SET
     -- again after analysis, and neither write may erase the other's columns.
     -- Only the always-supplied NOT NULL columns above overwrite unconditionally.
     duration_s    = COALESCE(EXCLUDED.duration_s, tracks.duration_s),
-    audio_path    = COALESCE(EXCLUDED.audio_path, tracks.audio_path),
+    audio_key    = COALESCE(EXCLUDED.audio_key, tracks.audio_key),
     analysis_json = COALESCE(EXCLUDED.analysis_json, tracks.analysis_json),
     segments_json = COALESCE(EXCLUDED.segments_json, tracks.segments_json),
     status        = EXCLUDED.status,

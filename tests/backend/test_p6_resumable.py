@@ -15,7 +15,7 @@ from unittest import mock
 
 from fixture import FIXTURE_TRACKS
 
-from backend import config, ingest, jamendo
+from backend import config, ingest, jamendo, storage
 from backend.db import Database, status
 from backend.timing import Timer
 
@@ -151,7 +151,7 @@ class TestCrashRecovery(ResumableCase):
     def test_missing_master_file_forces_refetch(self):
         """State claims fetched but the file is gone — trust the disk."""
         self.ingest()
-        Path(self.track().audio_path).unlink()
+        Path(storage.get_store().local_path(self.track().audio_key)).unlink()
         patcher, calls = self.counting_fetch()
         with patcher:
             self.ingest()
@@ -186,7 +186,7 @@ class TestCrashRecovery(ResumableCase):
         self.assertEqual(row.status, status.FETCHED)
         self.assertTrue(status.is_failed(row))
         self.assertIn("analysis exploded", row.status_error)
-        self.assertTrue(Path(row.audio_path).exists(),
+        self.assertTrue(Path(storage.get_store().local_path(row.audio_key)).exists(),
                         "master was discarded on failure")
 
         # The retry reuses that master and clears the error.
@@ -238,7 +238,7 @@ class TestIngestStateReporting(ResumableCase):
             "status": status.ANALYZED,
         })
         after = self.track()
-        for col in ("name", "artist", "license", "audio_path", "native_bpm",
+        for col in ("name", "artist", "license", "audio_key", "native_bpm",
                     "camelot", "analysis_json", "segments_json", "ready_at"):
             self.assertEqual(getattr(before, col), getattr(after, col), col)
         self.assertEqual(after.status, status.ANALYZED)
@@ -257,7 +257,7 @@ class TestSchemaMigration(ResumableCase):
             genre TEXT NOT NULL, license TEXT NOT NULL,
             license_nd INTEGER NOT NULL, license_sa INTEGER NOT NULL,
             license_nc INTEGER NOT NULL, mixable INTEGER NOT NULL,
-            native_bpm REAL, camelot TEXT, duration_s REAL, audio_path TEXT,
+            native_bpm REAL, camelot TEXT, duration_s REAL, audio_key     TEXT,
             analysis_json TEXT, segments_json TEXT)""")
         con.execute("INSERT INTO tracks VALUES ('legacy','N','A','house',"
                     "'CC BY 4.0',0,0,0,1,124.0,'8A',60.0,'/tmp/x.wav',NULL,NULL)")
@@ -281,7 +281,7 @@ class TestSchemaMigration(ResumableCase):
             genre TEXT NOT NULL, license TEXT NOT NULL,
             license_nd INTEGER NOT NULL, license_sa INTEGER NOT NULL,
             license_nc INTEGER NOT NULL, mixable INTEGER NOT NULL,
-            native_bpm REAL, camelot TEXT, duration_s REAL, audio_path TEXT,
+            native_bpm REAL, camelot TEXT, duration_s REAL, audio_key     TEXT,
             analysis_json TEXT, segments_json TEXT)""")
         con.execute("INSERT INTO tracks VALUES ('keep','N','A','house',"
                     "'CC BY 4.0',0,0,0,1,124.0,'8A',60.0,'/tmp/x.wav',NULL,NULL)")

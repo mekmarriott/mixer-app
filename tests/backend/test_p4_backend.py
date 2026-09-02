@@ -23,10 +23,25 @@ class TestP4Backend(unittest.TestCase):
     def test_p4_01_audio_serves_prerendered_variant(self):
         """P4-01: the audio endpoint streams the pre-rendered variant file
         byte-for-byte — no runtime stretch happens at request time."""
-        vpath = self.tmp / "variants" / "1001_123.wav"
+        # Grid point taken from what was actually rendered, not hardcoded, so
+        # this asserts the byte-for-byte property rather than a grid layout
+        # (config.BPM_BUCKETS spacing is a storage tuning knob — see config.py).
+        with read() as q:
+            variants = q.list_variants_for_track(track_id="1001")
+        self.assertTrue(variants, "fixture track 1001 should have variants")
+        grid_bpm = variants[0].grid_bpm
+
+        vpath = self.tmp / "variants" / f"1001_{grid_bpm}.wav"
         self.assertTrue(vpath.exists())
         on_disk = vpath.read_bytes()
-        r = self.client.get("/api/tracks/1001/audio?bpm=123")
+
+        # The endpoint redirects to the blob store rather than proxying bytes
+        # (infrastructure-plan §1.2); following it must still yield the exact
+        # pre-rendered file, which is what P4-01 actually asserts.
+        r = self.client.get(f"/api/tracks/1001/audio?bpm={grid_bpm}")
+        self.assertEqual(r.status_code, 302)
+        r = self.client.get(f"/api/tracks/1001/audio?bpm={grid_bpm}",
+                            follow_redirects=True)
         self.assertEqual(r.status_code, 200)
         self.assertEqual(r.data, on_disk)
 

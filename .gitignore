@@ -1,9 +1,15 @@
+# Secrets and local environment
 .env
+.env.*
+!.env.example
 
 # Python
 .venv/
+venv/
 __pycache__/
 *.py[cod]
+*.egg-info/
+.pytest_cache/
 
 # Node / Playwright tooling (test-only; the app itself has no build step)
 node_modules/
@@ -11,9 +17,17 @@ test-results/
 playwright-report/
 blob-report/
 
+# Vercel
+.vercel/
+
 # Sibling session worktrees live here — never part of the tree
 .claude/worktrees/
 
-# Generated at runtime — safe to delete, rebuilt by ingestion
+# Generated at runtime — safe to delete, rebuilt by ingestion.
+# Large and fully reproducible from config/tracks.json.
 data/
 data-e2e/
+blobs/
+
+# OS
+.DS_Store
