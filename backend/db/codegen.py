@@ -21,6 +21,15 @@ same guarantees:
 Result rows are decoded positionally, which both sqlite3 and psycopg support
 without a per-row dict — for ``SELECT *`` the order is the schema's, and for an
 explicit select list it is the order given in the ``-- columns:`` annotation.
+
+That makes column **order** load-bearing, which is worth knowing before editing
+schema.sql. Regenerating the bindings does not migrate any database that already
+exists (``migrate()`` is all ``IF NOT EXISTS``), and the three ways a live table
+can then disagree with these models do not fail alike: a removed column raises
+IndexError, an appended one is silently ignored, and a **renamed** one silently
+hands the old column's value to the new field, because the arity still matches.
+Reads lie while writes fail loudly, on SQLite and PostgreSQL alike. See
+docs/database.md, "Regenerating is not migrating".
 """
 from __future__ import annotations
 

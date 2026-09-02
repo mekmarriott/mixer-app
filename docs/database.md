@@ -52,6 +52,51 @@ function rather than being folded into the scope context managers.
 `tests/backend/test_p5_db.py::TestCodegen::test_generated_files_are_not_stale`
 fails if step 2 or 3 is skipped.
 
+### Regenerating is not migrating — and a rename fails silently
+
+`migrate()` only ever **creates**: every statement in `schema.sql` is
+`IF NOT EXISTS`, so against a database that already exists it is a no-op. There
+is no migration runner. Editing `schema.sql` changes what new databases get and
+what the code expects; it does nothing to a database that is already out there.
+
+That would be merely annoying if the mismatch produced an error. For one case it
+does not. **Rows are decoded positionally** (see below), so column *order* is
+load-bearing, and the three ways a live table can drift from the schema fail
+very differently:
+
+| Drift | What happens |
+|---|---|
+| Column **removed** | `IndexError` — loud, immediate |
+| Column **appended** | Silently ignored (decoding enumerates the model's fields, not the row) |
+| Column **renamed** | **Silently wrong** — the old column's value is handed to the new field |
+
+A rename keeps the arity identical, so every value shifts into a
+same-positioned field with a different name and nothing raises. Observed on
+exactly this: after `audio_path` was renamed to `audio_key`, a database written
+before the rename served `Track.audio_key == "/old/abs/path.wav"` and the API
+answered `200` throughout.
+
+This splits by **statement kind, not by engine**. Statements that name the
+column (`UpsertTrack` lists its columns) fail loudly on both SQLite and
+PostgreSQL; `SELECT *` mismaps silently on both, because psycopg also returns
+tuples positionally. The signature of a stale deployment is therefore *writes
+fail, reads lie* — and the loud write failure is actively misleading, because it
+sends you to look at ingestion while reads quietly serve wrong values.
+
+So, when a schema change reaches a database that already has rows:
+
+- **Locally / in tests**, delete and rebuild. `data/` and `data-e2e/` are caches
+  (note that `playwright.config.mjs` deliberately reuses `data-e2e/` between
+  runs, so a stale one survives until you remove it).
+- **Against a database whose contents matter**, write the `ALTER TABLE` by hand.
+  Regenerating the bindings will not do it for you.
+
+One SQLite-only trap with no PostgreSQL analogue: if `DB_PATH` moves,
+`migrate()` cheerfully creates a *second* database file, and a stale catalog and
+a fresh one coexist with nothing raising. When rows you know you ingested are
+missing, check for more than one `.sqlite3` under `data/` before debugging
+anything else.
+
 ### Annotation format
 
 ```sql
@@ -74,8 +119,16 @@ FROM latency GROUP BY stage ORDER BY stage;
 
 `SELECT *` infers its row type from the schema. Any other select list needs a
 `-- columns:` annotation naming each column and its canonical type, in select
-order (it may wrap across several comment lines). Result rows are decoded
-positionally, which both sqlite3 and psycopg support without a per-row dict.
+order (it may wrap across several comment lines).
+
+Result rows are decoded **positionally**: the row tuple is zipped against the
+model's fields by index. That is what lets one code path serve sqlite3 and
+psycopg without building a dict per row, and it is why the `-- columns:`
+annotation has to list columns in *select* order. The cost is that column order
+is load-bearing — see "Regenerating is not migrating" above for how a schema
+that drifts out from under the models fails, and which of those failures is
+silent. An explicit select list is safer than `SELECT *` in this respect: its
+order is fixed by the query text rather than by the live table.
 
 Parameters are named (`:track_id`) and their type is inferred from the column of
 the same name on the table(s) the statement references. A parameter that matches
