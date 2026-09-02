@@ -247,7 +247,19 @@ async function renderDeckZeroState() {
 }
 
 async function renderDeckRecommendations(forTrackId) {
-  const recs = rankRecommendations(await api.recommendations(forTrackId));
+  // Suggestions are an aid, never a precondition. Ranking a track against the
+  // whole library is the most expensive read the API serves, and when it times
+  // out the rejection used to travel all the way up into boot's catch, which
+  // left the warmup overlay up for good. An empty deck is a far smaller loss
+  // than an app that will not open.
+  let recs;
+  try {
+    recs = rankRecommendations(await api.recommendations(forTrackId));
+  } catch {
+    $("#deck-sub").textContent = "Suggestions are unavailable for this track.";
+    $("#deck").innerHTML = "";
+    return;
+  }
   $("#deck-sub").textContent = recs.length
     ? `Suggested next tracks for what\u2019s playing \u2014 ranked by match`
     : "No compatible tracks share a BPM grid with this one.";
@@ -1021,10 +1033,23 @@ async function waitForCatalog() {
 
     // Resume the most recently edited mix; if there are none, start one so
     // that everything the user does from here is already being saved.
+    // Reopening the last mix is a convenience, not a precondition. Boot
+    // resumes the SAME mix on every load, so a mix that cannot be restored —
+    // a track whose audio is gone, a suggestion query that times out — would
+    // otherwise brick the app permanently, with no reload able to clear it.
+    // Fall back to a new mix instead, which is also what a first-time visitor
+    // gets.
     const existing = await api.mixes();
+    let restored = false;
     if (existing.length) {
-      await loadMix(existing[0].id);
-    } else {
+      try {
+        await loadMix(existing[0].id);
+        restored = true;
+      } catch {
+        toast("Could not reopen the last mix \u2014 started a new one instead.");
+      }
+    }
+    if (!restored) {
       const created = await api.createMix("Untitled Mix");
       currentMixId = created.id;
       await showZeroState();
