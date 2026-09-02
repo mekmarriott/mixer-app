@@ -91,8 +91,49 @@ function setSaveIndicator(text, busy = false) {
   el.classList.toggle("saving", busy);
 }
 
+/**
+ * The grid a track is actually on, or null when it is on none yet.
+ *
+ * This used to fall back to a literal 120. Grid points are derived from a
+ * track's own tempo band, so 120 is a real one for some tracks and impossible
+ * for others: a 163 BPM track's grid is [153..178] and never includes it. A
+ * track stamped 120 before its BPM was known — which is every first track,
+ * since it has no shared grid until a second one joins — then had every audio
+ * request for it 404, permanently, because the variant cannot exist.
+ *
+ * The fallback is therefore taken from the track's OWN rendered grid, which is
+ * the set of tempos it actually has variants at, so whatever is chosen can be
+ * served. mix_tracks.grid_bpm is INTEGER NOT NULL, so there is no "no grid"
+ * to store here — but there is always a real grid point to store instead.
+ */
+function gridBpmFor(track) {
+  if (track && track.bpm) return track.bpm;
+  if (gridBpm) return gridBpm;
+  const id = track && track.id;
+  const grids = renderedGridsFor(id);
+  if (grids.length) return grids[0];
+  // No rendered variants at all: the native tempo is still a truthful answer,
+  // and the API falls back to the master when no variant matches.
+  const meta = trackMeta(id);
+  return (meta && meta.bpm) || null;
+}
+
+/** Tempos this track actually has variants rendered at. */
+function renderedGridsFor(id) {
+  const meta = trackMeta(id);
+  if (meta && meta.grid_bpms && meta.grid_bpms.length) return meta.grid_bpms;
+  // A deck row's inlined metadata may omit the grid list; the catalog row for
+  // the same track carries it.
+  const row = catalog.find((c) => c.id === id);
+  return (row && row.grid_bpms) || [];
+}
+
 function beatsFor(track) {
-  return align.beatsBetween(track.delta ?? 0, track.bpm || gridBpm || 120);
+  const bpm = gridBpmFor(track);
+  // The server stores beats as 0 when there is no grid to measure them against
+  // (mixes.seconds_to_beats); inventing a tempo here would disagree with it.
+  if (!bpm) return 0;
+  return align.beatsBetween(track.delta ?? 0, bpm);
 }
 
 /** Persist one track's position — one row, one column. */
@@ -123,7 +164,7 @@ async function saveChain() {
       node_id: mixNodeIds[i] || null,
       track_id: t.id,
       delta_beats: beatsFor(t),
-      grid_bpm: Math.round(t.bpm || gridBpm || 120),
+      grid_bpm: Math.round(gridBpmFor(t)),
     }));
     const saved = await api.putMixTracks(currentMixId, payload);
     mixNodeIds = saved.tracks.map((t) => t.node_id);
@@ -588,7 +629,12 @@ function beatAttractors() {
   const grid = wfA.beat_grid.map((bt) => bt + origin);
   // Extend the grid across the whole mix: a few-hour set runs far past the
   // first track's own beat list.
-  const beat = 60 / (wfA.bpm || gridBpm || 120);
+  // Without a tempo the grid cannot be extended; the track's own beat list is
+  // still correct as far as it goes, which is better than ruling lines at a
+  // tempo the track is not playing at.
+  const bpm = wfA.bpm || gridBpm;
+  if (!bpm) return grid;
+  const beat = 60 / bpm;
   const total = state.totalDuration(mix);
   for (let t = grid[grid.length - 1] ?? 0; t < total; t += beat) grid.push(t + beat);
   return grid;
