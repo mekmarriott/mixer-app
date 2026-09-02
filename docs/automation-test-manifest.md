@@ -17,9 +17,9 @@ grep -rhoE "P[1-4]-[0-9]{2}" tests/ | sort -u
 
 | Suite | Runner | Count | Runs in | What it is for |
 |---|---|---|---|---|
-| **Backend** | `unittest` (stdlib) | 40 | ~6 s | Pipeline, compliance gates, API contract. Builds a real 5-track fixture catalog through one full ingestion. |
-| **Frontend logic** | `node:test` (stdlib) | 42 | <1 s | The pure interaction modules (`state`, `align`, `crossfade`, `navbar`, `deck`, `attribution`) — no DOM, no WebAudio. |
-| **Browser** | Playwright + Chromium | 12 | ~20 s | What the other two structurally cannot reach: native drag-and-drop, canvas pixels, the WebAudio clock, and real network behaviour. |
+| **Backend** | `unittest` (stdlib) | 84 | ~8 s | Pipeline, compliance gates, API contract, startup precompute and DB concurrency. Builds a real 5-track fixture catalog through one full ingestion. |
+| **Frontend logic** | `node:test` (stdlib) | 50 | <1 s | The pure interaction modules (`state`, `align`, `crossfade`, `navbar`, `deck`, `attribution`, `boot`) — no DOM, no WebAudio. |
+| **Browser** | Playwright + Chromium | 18 | ~23 s | What the other two structurally cannot reach: native drag-and-drop, canvas pixels, the WebAudio clock, and real network behaviour. |
 | **Manual** | a human with ears | 1 | — | Perceptual judgement only. |
 
 ```bash
@@ -137,6 +137,85 @@ manual sign-off list in `design-document.md` §12 before Playwright existed.
 
 ---
 
+## Startup, concurrency, and the zero state (INF / ZS / API)
+
+New requirements, so a new ID series. These are not in `testing-document.md`,
+which predates them.
+
+| ID | Requirement | Suite | Test |
+|---|---|---|---|
+| INF-01 | Waveforms precomputed at startup; deck reads no DB and inlines them | Backend | `test_inf_01_waveforms_precomputed_at_startup`, `..._deck_request_reads_no_database`, `..._deck_inlines_waveforms`, `..._cached_envelope_matches_direct_computation`, `..._recommendations_inline_candidate_waveforms` |
+| INF-02 | DB concurrency bounded; a connection is never shared concurrently | Backend | `test_inf_02_concurrency_must_stay_below_pool_size`, `..._semaphore_caps_in_flight_work`, `..._connection_never_shared_concurrently`, `..._connection_returns_to_pool_after_an_error` |
+| INF-03 | Concurrent catalog reads all succeed (API-01 guard, API layer) | Backend | `test_inf_03_concurrent_reads_all_succeed` |
+| INF-04 | Warmup reports progress; catalog endpoints gated until ready | Backend + Logic | `test_inf_04_status_reports_ready_with_pool_bounds`, `..._health_is_never_gated`, `..._catalog_endpoints_gated_until_ready`, `..._failed_warmup_reports_500_not_503` · 8 `INF-04:` tests in `boot.test.mjs` |
+| INF-05 | Zero state browses by genre within a cap; no scores, ND still listed | Backend | `test_inf_05_deck_groups_by_genre_within_cap`, `..._zero_state_carries_no_scores`, `..._caps_tracks_per_genre`, `..._largest_genre_leads`, `..._nd_tracks_are_listed_not_hidden` |
+| INF-06 | Popularity orders the deck when present, deterministically otherwise | Backend | `test_inf_06_popularity_orders_when_present`, `..._falls_back_to_a_deterministic_shuffle`, `..._partial_popularity_ranks_known_values_first` |
+| API-01 | Parallel catalog reads all succeed | Browser | `API-01 parallel catalog reads all succeed` |
+| API-02 | In-flight DB work stays below the pool size | Browser | `API-02 the pool bounds in-flight DB work below its size` |
+| ZS-01 | Deck browses by genre with a bounded count per genre | Browser | `ZS-01 deck browses by genre with a bounded number of tracks each` |
+| ZS-02 | Opening load makes no per-track waveform requests | Browser | `ZS-02 the opening page load makes no per-track waveform requests` |
+| ZS-03 | Pair analysis starts only after track 1 is selected | Browser | `ZS-03 pair analysis only starts once track 1 is selected` |
+| ZS-04 | Status endpoint reports readiness and pool bounds | Browser | `ZS-04 status endpoint reports readiness and pool bounds` |
+| ZS-05 | Boot overlay is dismissed once the catalog is ready | Browser | `ZS-05 the boot overlay is dismissed once the catalog is ready` |
+
+### Not yet covered
+
+**The wait screen has no test that sees it.** INF-04 covers the server's 503
+gating and every branch of the client's presentation logic, but no test loads
+the page *during* a real warmup and asserts the overlay is visible — that needs
+a server held mid-ingest, which the suite cannot currently arrange
+deterministically. Verified by hand on a cold start (`rm -rf data/`).
+
+**Popularity ordering is dormant.** INF-06 proves the code path, but nothing
+stores a popularity value yet: `backend/jamendo.py` requests only
+`include=licenses`, and the tracks table has no `popularity` column. Jamendo
+does expose it (`order=popularity_total`, and `include=stats` returns
+listen/download counts). Wiring it needs a change to the Jamendo fetch and the
+schema — both owned by other sessions right now — so `backend/catalog.py` reads
+the field if present and falls back to a deterministic shuffle, and will start
+ordering by popularity on its own the moment the field exists.
+
+---
+
+## Startup, concurrency, and the zero state (INF / ZS / API)
+
+New requirements, so a new ID series. These are not in `testing-document.md`,
+which predates them.
+
+| ID | Requirement | Suite | Test |
+|---|---|---|---|
+| INF-01 | Waveforms precomputed at startup; deck reads no DB and inlines them | Backend | `test_inf_01_waveforms_precomputed_at_startup`, `..._deck_request_reads_no_database`, `..._deck_inlines_waveforms`, `..._cached_envelope_matches_direct_computation`, `..._recommendations_inline_candidate_waveforms` |
+| INF-02 | Admission bounded, below the engine ceiling, re-entrant, leak-free | Backend | `test_inf_02_concurrency_must_stay_below_connection_ceiling`, `..._semaphore_caps_in_flight_work`, `..._nested_scopes_do_not_deadlock`, `..._permit_released_after_an_error` |
+| INF-03 | Concurrent catalog reads all succeed (API-01 guard, API layer) | Backend | `test_inf_03_concurrent_reads_all_succeed` |
+| INF-04 | Warmup reports progress; catalog endpoints gated until ready | Backend + Logic | `test_inf_04_status_reports_ready_with_pool_bounds`, `..._health_is_never_gated`, `..._catalog_endpoints_gated_until_ready`, `..._failed_warmup_reports_500_not_503` · 8 `INF-04:` tests in `boot.test.mjs` |
+| INF-05 | Zero state browses by genre within a cap; no scores, ND still listed | Backend | `test_inf_05_deck_groups_by_genre_within_cap`, `..._zero_state_carries_no_scores`, `..._caps_tracks_per_genre`, `..._largest_genre_leads`, `..._nd_tracks_are_listed_not_hidden` |
+| INF-06 | Popularity orders the deck when present, deterministically otherwise | Backend | `test_inf_06_popularity_orders_when_present`, `..._falls_back_to_a_deterministic_shuffle`, `..._partial_popularity_ranks_known_values_first` |
+| API-01 | Parallel catalog reads all succeed | Browser | `API-01 parallel catalog reads all succeed` |
+| API-02 | Admission caps how many requests are inside the database | Browser | `API-02 admission caps how many requests are inside the database` |
+| ZS-01 | Deck browses by genre with a bounded count per genre | Browser | `ZS-01 deck browses by genre with a bounded number of tracks each` |
+| ZS-02 | Opening load makes no per-track waveform requests | Browser | `ZS-02 the opening page load makes no per-track waveform requests` |
+| ZS-03 | Pair analysis starts only after track 1 is selected | Browser | `ZS-03 pair analysis only starts once track 1 is selected` |
+| ZS-04 | Status endpoint reports readiness and pool bounds | Browser | `ZS-04 status endpoint reports readiness and pool bounds` |
+| ZS-05 | Boot overlay is dismissed once the catalog is ready | Browser | `ZS-05 the boot overlay is dismissed once the catalog is ready` |
+
+### Not yet covered
+
+**The wait screen has no test that sees it.** INF-04 covers the server's 503
+gating and every branch of the client's presentation logic, but no test loads
+the page *during* a real warmup and asserts the overlay is visible — that needs
+a server held mid-ingest, which the suite cannot currently arrange
+deterministically. Verified by hand on a cold start (`rm -rf data/`).
+
+**Popularity ordering is dormant.** INF-06 proves the code path, but nothing
+stores a popularity value yet: `backend/jamendo.py` requests only
+`include=licenses`, and the schema has no `popularity` column. Jamendo does
+expose it (`order=popularity_total`, and `include=stats` returns
+listen/download counts). `backend/deck.py` reads the field if present and falls
+back to a deterministic shuffle, so it starts ordering by popularity the moment
+the column exists.
+
+---
+
 ## Known defects and gaps
 
 Tracked here rather than left to be rediscovered. Each has a test attached, so
@@ -168,6 +247,21 @@ database also runs in WAL mode, so a reader never waits on the writer.
 lock handles Flask's threaded server" — it did not, and §6 now describes the
 per-thread arrangement. `tests/backend/test_p5_db.py::TestConcurrency` covers
 the same ground without a browser.
+
+*The other half of the fix.* Per-thread connections make concurrent reads
+**correct**, but they do not **bound** them: `SQLiteEngine` mints a connection
+per thread on demand and nothing caps the threads, so a burst is limited only by
+Flask's worker pool. `backend/dbguard.py` adds an admission semaphore above the
+engine, capping in-flight database work at `DB_MAX_CONCURRENCY` and keeping it
+strictly below the engine's connection ceiling (`psycopg_pool`'s `max_size` on
+Postgres; SQLite advertises none, so admission *is* the bound). Waiting at
+admission rather than inside a connection checkout keeps the wait bounded,
+visible via `/api/status`, and answerable with a clean 503. Covered by `INF-02`
+and `API-02`.
+
+Independently, the page no longer makes the requests that triggered this at all:
+waveforms are precomputed at startup and inlined into the deck payload
+(`INF-01`), so the opening load went from nine parallel per-row reads to zero.
 
 Repro (now expected to print all-200), against a server on port 5199:
 

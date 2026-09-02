@@ -26,9 +26,10 @@ export default defineConfig({
   workers: 1,
   forbidOnly: !!process.env.CI,
   // No retries. These were a mitigation for the API-01 defect (the shared
-  // SQLite connection race), which is fixed: connections are now per-thread
-  // and scoped to a request. If anything flakes, the test is wrong and should
-  // be repaired rather than retried.
+  // SQLite connection race), which is fixed twice over: backend/db gives each
+  // thread its own request-scoped connection, and backend/dbguard caps how many
+  // requests may be inside the database at once. If anything flakes now, the
+  // test is wrong and should be repaired rather than retried.
   retries: 0,
   reporter: process.env.CI ? [["list"], ["html", { open: "never" }]] : [["list"]],
 

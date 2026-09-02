@@ -24,6 +24,23 @@ def database_url():
     return "sqlite:///" + str(DB_PATH)
 
 SAMPLE_RATE = 22050                     # prototype rate (see design doc §Audio format)
+
+# ---- DB concurrency (backend/dbpool.py) ---------------------------------
+# max_concurrency must stay STRICTLY BELOW pool_size: the semaphore is the
+# queueing point, and the spare connections guarantee an admitted caller never
+# blocks on checkout. Raising these past what the storage engine allows
+# concurrently is the thing to avoid — for Postgres that is max_connections
+# minus whatever the ingest workers hold.
+DB_POOL_SIZE = 8
+DB_MAX_CONCURRENCY = 6
+DB_ACQUIRE_TIMEOUT_S = 5.0
+
+# ---- Zero-state deck ----------------------------------------------------
+# Before any track is chosen there is nothing to match against, so the opening
+# view is a browse surface: a few tracks per genre, no pair analysis.
+DECK_TRACKS_PER_GENRE = 5
+DECK_WAVEFORM_POINTS = 120              # deck row thumbnails
+TIMELINE_WAVEFORM_POINTS = 480          # track window
 FRAME_SIZE = 2048
 HOP_SIZE = 512
 

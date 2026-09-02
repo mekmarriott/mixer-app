@@ -129,11 +129,49 @@ out-of-process writers, and a process-wide lock serialising writes. Read and
 write scopes are explicit and nest, so ingestion commits a track and its
 rendered variants as one transaction instead of a commit per statement.
 
+**Admission control.** Per-thread connections fix the correctness half of
+API-01, but they do not bound *how much* concurrent work reaches the database:
+`SQLiteEngine` mints a connection per thread on demand, and nothing caps the
+threads. `backend/dbguard.py` wraps the `Database` with a semaphore admitting at
+most `DB_MAX_CONCURRENCY` callers, kept strictly below the engine's connection
+ceiling (`psycopg_pool`'s `max_size` on Postgres; on SQLite there is no ceiling,
+so admission *is* the bound). Blocking at admission rather than inside a
+connection checkout makes the wait bounded, observable via `/api/status`, and
+answerable with a clean 503. The gate is re-entrant per thread, because read and
+write scopes nest and an inner scope must not re-take a permit its own thread
+already holds.
+
 **Postgres/Supabase is a URL, not a rewrite.** `db/dialect.py` maps the
 canonical column types to each engine's DDL and rewrites `:named` placeholders
 into psycopg's `%(name)s`; query bodies stay neutral (`ON CONFLICT` works on
 both), so there is one set of `.sql` files rather than one per engine. Setting
 `DJMIXER_DATABASE_URL` switches engines. See `docs/database.md`.
+
+
+**Correction.** This section previously claimed that "`check_same_thread=False`
++ a write lock handles Flask's threaded server". That was wrong, and the
+browser suite proved it: sharing one connection across worker threads while
+locking only writes let concurrent *reads* interleave, so 15-20% of them either
+raised `sqlite3.InterfaceError` (HTTP 500) or returned a phantom-empty row that
+the API reported as a 404 for a track that exists. A write lock is not
+sufficient — reads need the same discipline.
+
+`backend/dbpool.py` replaces the shared connection with a bounded pool:
+
+- **No connection is used by two threads at once.** Each caller checks one out
+  for the duration of its work. This is what removes the race.
+- **In-flight DB work is capped strictly below the pool size.** A semaphore
+  admits at most `DB_MAX_CONCURRENCY` callers against `DB_POOL_SIZE`
+  connections. The headroom makes admission the queueing point — bounded,
+  observable via `/api/status`, and answerable with a clean 503 — instead of
+  letting a worker stall inside a checkout. Set the limit below whatever the
+  storage engine allows concurrently; on Postgres that is `max_connections`
+  minus whatever the ingest workers hold.
+- WAL + `busy_timeout` so readers do not block each other.
+
+This is a storage-layer contract, not a SQLite detail: the same bound is what a
+Postgres pool needs, which is why it lives in its own module rather than inside
+`db.py`.
 
 ## 7. API server: Flask
 
@@ -175,6 +213,37 @@ marker radius 1.25 s with quadratic ease (full snap at center, zero at the
 edge), beat radius 0.18 s, markers win over beats. Chosen so a marker is
 easy to hit from ~a bar away but a deliberate placement 1.5 s off stays put
 (P4-24 asserts both properties).
+
+## 8a. Startup precompute, readiness, and the zero state
+
+Three related decisions, all made after the prototype's first live run showed
+the opening page doing avoidable work.
+
+**Waveforms are computed once at startup, never per page load.** A track's
+envelope derives entirely from its cached analysis, which never changes after
+ingestion — so recomputing it (and re-reading the multi-megabyte
+`analysis_json` blob) on every page load was pure waste. `backend/warmup.py`
+builds every envelope the UI can ask for before the server reports ready, and
+`/api/deck` and `/api/tracks/<id>/recommendations` inline them into their
+payloads. The opening load went from nine parallel per-row requests to zero,
+which also removed the burst that triggered the §6 read race.
+
+**The server binds its port before the catalog exists.** Ingestion now runs on
+a background thread and `/api/status` reports phase, progress and elapsed time.
+Catalog endpoints answer 503 + `Retry-After` with that same payload while
+warming, and the client renders it as a progress overlay rather than a
+half-built page. A failed warmup answers 500, not 503: it is not "try again
+shortly", it needs attention. `/api/health` and `/api/status` are never gated,
+or nothing could poll them.
+
+**The zero state browses; it does not rank.** With no track selected there is
+nothing to match against, so scoring the opening deck would be theatre. It
+shows a few tracks per genre (`DECK_TRACKS_PER_GENRE`) and runs no pair
+analysis at all — that begins when track 1 is chosen, and goes through the same
+bounded pool as everything else. Ordering prefers a stored `popularity` value
+and falls back to a per-genre deterministic shuffle, so the view is stable
+across restarts without being alphabetical. Nothing stores popularity yet (see
+the manifest's "Not yet covered"); the code path is live and dormant.
 
 ## 9. Visual design
 

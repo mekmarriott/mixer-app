@@ -4,7 +4,7 @@
 import { test, expect } from "@playwright/test";
 import {
   bootApp, addFirstTrack, addSecondTrack, dragRowToTimeline,
-  sampleTimeline, countMarkerClusters, DRAGGABLE_ROW, COLORS,
+  sampleTimeline, sampleTimelineWhenDrawn, countMarkerClusters, DRAGGABLE_ROW, COLORS,
 } from "./helpers.mjs";
 
 test.describe("deck and two-track mixing state", () => {
@@ -29,7 +29,7 @@ test.describe("deck and two-track mixing state", () => {
     // the transport armed.
     await expect(page.locator("#attributions span")).toHaveCount(2);
     await expect(page.locator("#btn-play")).toBeEnabled();
-    const px = await sampleTimeline(page);
+    const px = await sampleTimelineWhenDrawn(page, { expectTrack2: true });
     expect(px.markerColumns.length).toBeGreaterThan(0);
   });
 
@@ -38,7 +38,7 @@ test.describe("deck and two-track mixing state", () => {
     await addFirstTrack(page);
 
     // One track: only magenta on the canvas.
-    let px = await sampleTimeline(page);
+    let px = await sampleTimelineWhenDrawn(page);
     expect(px.track1).toBeGreaterThan(0);
     expect(px.track2).toBe(0);
 
@@ -46,7 +46,7 @@ test.describe("deck and two-track mixing state", () => {
 
     // Two tracks: both colours present simultaneously, and they are the two
     // mandated hues rather than one shared colour.
-    px = await sampleTimeline(page);
+    px = await sampleTimelineWhenDrawn(page, { expectTrack2: true });
     expect(px.track1).toBeGreaterThan(0);
     expect(px.track2).toBeGreaterThan(0);
     expect(COLORS.track1).not.toEqual(COLORS.track2);
@@ -57,7 +57,7 @@ test.describe("deck and two-track mixing state", () => {
     await addFirstTrack(page);
     await addSecondTrack(page);
 
-    const { markerColumns } = await sampleTimeline(page);
+    const { markerColumns } = await sampleTimelineWhenDrawn(page, { expectTrack2: true });
     const arrows = countMarkerClusters(markerColumns);
     // ui-requirements shows three; the backend surfaces MARKER_TOP_N (5).
     expect(arrows).toBeGreaterThanOrEqual(2);

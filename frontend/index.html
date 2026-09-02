@@ -31,7 +31,7 @@
       <h2 id="deck-title">Song deck</h2>
       <span id="deck-sub" class="deck-sub">All tracks &mdash; pick your opener</span>
     </div>
-    <ol id="deck" class="deck" aria-labelledby="deck-title"></ol>
+    <div id="deck" class="deck" aria-labelledby="deck-title"></div>
   </section>
 </main>
 
@@ -47,6 +47,18 @@
 </dialog>
 
 <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+<!-- Shown while the server ingests/precomputes. The app renders nothing until
+     the catalog is ready, so the user never sees a half-built page. -->
+<div id="boot-overlay" class="boot-overlay" role="status" aria-live="polite">
+  <div class="boot-card">
+    <div class="boot-spinner" aria-hidden="true"></div>
+    <div class="boot-title">Preparing catalog</div>
+    <div id="boot-message" class="boot-message">Connecting to the server…</div>
+    <div class="boot-track"><div id="boot-bar" class="boot-bar"></div></div>
+    <div id="boot-detail" class="boot-detail"></div>
+  </div>
+</div>
 
 <script type="module" src="/js/app.js"></script>
 </body>

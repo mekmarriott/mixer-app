@@ -126,6 +126,7 @@ main { flex: 1; display: flex; flex-direction: column; padding: 16px 22px; gap: 
 }
 .deck-sub { font-size: 12px; color: var(--dim); }
 .deck { list-style: none; margin: 0; padding: 0; overflow-y: auto; }
+.deck-list { list-style: none; margin: 0; padding: 0; }
 .deck-row {
   display: grid;
   grid-template-columns: 110px 1fr auto auto;
@@ -208,3 +209,92 @@ main { flex: 1; display: flex; flex-direction: column; padding: 16px 22px; gap: 
 @media (prefers-reduced-motion: reduce) {
   .toast { transition: none; }
 }
+
+/* ---------- boot overlay ----------
+   Covers the app while the server ingests and precomputes. The page behind it
+   is never partially rendered: app.js waits for readiness before its first
+   fetch of catalog data. */
+.boot-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg);
+  transition: opacity 220ms ease;
+}
+.boot-overlay.hidden { opacity: 0; pointer-events: none; }
+.boot-card {
+  width: min(420px, 86vw);
+  padding: 28px 30px 24px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  text-align: center;
+}
+.boot-spinner {
+  width: 30px;
+  height: 30px;
+  margin: 0 auto 16px;
+  border: 2px solid var(--line);
+  border-top-color: var(--gold);
+  border-radius: 50%;
+  animation: boot-spin 780ms linear infinite;
+}
+@keyframes boot-spin { to { transform: rotate(360deg); } }
+.boot-title {
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--dim);
+  margin-bottom: 8px;
+}
+.boot-message { font-size: 14px; margin-bottom: 16px; }
+.boot-track {
+  height: 3px;
+  border-radius: 2px;
+  background: var(--line);
+  overflow: hidden;
+}
+.boot-bar {
+  height: 100%;
+  width: 0%;
+  background: var(--gold);
+  transition: width 260ms ease;
+}
+.boot-detail {
+  margin-top: 10px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--dim);
+}
+.boot-card.failed .boot-spinner { animation: none; border-top-color: var(--track1); }
+.boot-card.failed .boot-message { color: var(--track1); }
+
+@media (prefers-reduced-motion: reduce) {
+  .boot-spinner { animation: none; }
+  .boot-overlay, .boot-bar { transition: none; }
+}
+
+/* ---------- zero-state genre deck ----------
+   Before a track is chosen there is nothing to rank, so the deck browses by
+   genre instead of pretending to score. */
+.genre-group { margin-bottom: 14px; }
+.genre-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin: 0 0 6px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--line);
+}
+.genre-name {
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text);
+}
+.genre-count { font-size: 11px; color: var(--dim); }

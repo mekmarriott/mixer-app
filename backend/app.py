@@ -1,10 +1,13 @@
-"""Flask API. Startup ingestion runs from config/tracks.json (see README).
+"""Flask API. Startup ingestion + waveform precompute run from
+config/tracks.json (see README).
 
 Endpoints
-  GET /api/health
+  GET /api/status                          warmup phase/progress + admission stats
+  GET /api/health                          liveness (never gated)
+  GET /api/deck                            zero-state: genres x N, waveforms inline
   GET /api/tracks                          catalog + attribution + flags
   GET /api/tracks/<id>                     analysis summary + segments
-  GET /api/tracks/<id>/waveform?bpm=&points=   downsampled energy envelope
+  GET /api/tracks/<id>/waveform?bpm=&points=   cached envelope
   GET /api/tracks/<id>/audio?bpm=          variant WAV (or master if no bpm)
   GET /api/tracks/<id>/recommendations     Phase 2 ranked candidates
   GET /api/transitions?a=&b=               Phase 3 scored curve + markers
@@ -13,12 +16,23 @@ Endpoints
 
 Every handler opens its own read scope on the `Database` (see backend/db):
 connections are per-thread and held only for the life of the request, rather
-than one process-wide handle shared across Flask's worker threads.
-"""
-import numpy as np
-from flask import Flask, abort, jsonify, request, send_file, send_from_directory
+than one process-wide handle shared across Flask's worker threads. That scope
+is wrapped by `backend/dbguard.BoundedDatabase`, which caps how many requests
+may be inside the database at once — see its module docstring for why
+per-thread connections alone do not bound concurrency.
 
-from . import config, ingest, licensing, matching, transitions
+Handlers that need catalog data are gated on warmup, so a browser arriving
+mid-startup gets a 503 with progress it can render as a wait screen instead of
+a partial page.
+"""
+from functools import wraps
+
+from flask import (Flask, abort, jsonify, request, send_file,
+                   send_from_directory)
+
+from . import config, dbguard, licensing, matching, transitions
+from . import warmup as warmup_mod
+from . import waveforms
 from .db import Database
 from .db.catalog import grid_bpms_by_track
 from .timing import Timer
@@ -26,23 +40,71 @@ from .timing import Timer
 FRONTEND_DIR = config.ROOT / "frontend"
 
 
-def create_app(run_ingestion=True, database=None):
+def create_app(run_ingestion=True, database=None, warmup_async=False):
+    """warmup_async=False blocks until the catalog is ready (tests, CLI);
+    True binds the port immediately and warms in the background (dev server)."""
     app = Flask(__name__, static_folder=None)
     config.ensure_dirs()
-    database = database or Database.from_config().migrate()
-    app.config["DATABASE"] = database
 
-    if run_ingestion:
-        with database.reading() as q:
-            empty = not q.count_tracks()
-        if empty:
-            print("[startup] ingesting catalog from", config.TRACKS_CONFIG)
-            for r in ingest.ingest_all(database, Timer(database)):
-                print("  ingested", r["id"], f"bpm={r['bpm']}", f"key={r['camelot']}",
-                      ("variants=" + ",".join(map(str, r["grid_bpms"]))) if r["mixable"]
-                      else "NOT MIXABLE (ND license)")
+    base = database or Database.from_config().migrate()
+    # Admission control sits above the engine so it applies to SQLite (which
+    # otherwise has no ceiling: one connection per thread, unbounded threads)
+    # and to Postgres alike.
+    database = base if isinstance(base, dbguard.BoundedDatabase) \
+        else dbguard.BoundedDatabase(base)
 
-    # ---------- frontend ----------
+    cache = waveforms.WaveformCache()
+    warm = warmup_mod.Warmup(database, cache)
+    app.config.update(DATABASE=database, WAVEFORMS=cache, WARMUP=warm)
+
+    if warmup_async:
+        warm.start_async(run_ingestion=run_ingestion)
+    else:
+        warm.run(run_ingestion=run_ingestion)
+
+    # ------------------------------------------------------------ plumbing
+    @app.errorhandler(dbguard.AdmissionTimeout)
+    def _saturated(exc):  # pragma: no cover - saturation only
+        resp = jsonify({"error": "db_busy", "detail": str(exc),
+                        "db": database.snapshot()})
+        resp.status_code = 503
+        resp.headers["Retry-After"] = "1"
+        return resp
+
+    def needs_catalog(fn):
+        """Gate a handler on warmup. 503 + Retry-After is the correct answer to
+        'the data does not exist yet' — the client renders a wait screen from
+        the same payload /api/status returns."""
+        @wraps(fn)
+        def wrapper(*a, **kw):
+            if not warm.ready:
+                snap = warm.snapshot()
+                resp = jsonify({"error": "warming_up", "status": snap})
+                resp.status_code = 500 if snap["phase"] == warmup_mod.FAILED else 503
+                resp.headers["Retry-After"] = "1"
+                return resp
+            return fn(*a, **kw)
+        return wrapper
+
+    def track_payload(t, grids=None, wf_points=None):
+        """`t` is a db.Track or the blob-free db.ListTrackSummariesRow."""
+        row = {
+            "id": t.id, "name": t.name, "artist": t.artist, "genre": t.genre,
+            "bpm": t.native_bpm, "camelot": t.camelot,
+            "duration_s": t.duration_s, "mixable": t.mixable,
+            "license_flags": {"nd": t.license_nd, "sa": t.license_sa,
+                              "nc": t.license_nc},
+            "attribution": licensing.attribution(t),
+        }
+        if grids is not None:
+            row["grid_bpms"] = grids.get(t.id, [])
+        if wf_points:
+            # Inline the thumbnail so a deck row costs zero extra requests.
+            wf = cache.get(t.id, wf_points)
+            row["waveform"] = wf["points"] if wf else None
+        return row
+
+    # ------------------------------------------------------------ frontend
     @app.get("/")
     def index():
         return send_from_directory(FRONTEND_DIR, "index.html")
@@ -55,30 +117,42 @@ def create_app(run_ingestion=True, database=None):
     def js(p):
         return send_from_directory(FRONTEND_DIR / "js", p)
 
-    # ---------- api ----------
+    # ----------------------------------------------------------- readiness
+    @app.get("/api/status")
+    def status():
+        """Never gated — this is what the wait screen polls."""
+        return jsonify({**warm.snapshot(), "db": database.snapshot()})
+
     @app.get("/api/health")
     def health():
-        with database.reading() as q:
-            return jsonify({"ok": True, "tracks": q.count_tracks()})
+        return jsonify({"ok": True, "ready": warm.ready})
 
+    # ----------------------------------------------------------- zero state
+    @app.get("/api/deck")
+    @needs_catalog
+    def deck_view():
+        """Opening view: a few tracks per genre, waveforms inline.
+
+        No matching and no pair analysis happen here — with nothing selected
+        there is nothing to score against. Served entirely from the warmup
+        snapshot, so it touches the database not at all.
+        """
+        return jsonify({"groups": warm.deck,
+                        "per_genre": config.DECK_TRACKS_PER_GENRE})
+
+    # ---------------------------------------------------------------- api
     @app.get("/api/tracks")
+    @needs_catalog
     def tracks():
         with database.reading() as q:
             # Summaries omit the analysis/segment blobs, which this payload
             # does not use; grids come back in one query rather than per track.
             summaries = q.list_track_summaries()
             grids = grid_bpms_by_track(q)
-        return jsonify([{
-            "id": t.id, "name": t.name, "artist": t.artist,
-            "genre": t.genre, "bpm": t.native_bpm, "camelot": t.camelot,
-            "duration_s": t.duration_s, "mixable": t.mixable,
-            "license_flags": {"nd": t.license_nd, "sa": t.license_sa,
-                              "nc": t.license_nc},
-            "attribution": licensing.attribution(t),
-            "grid_bpms": grids.get(t.id, []),
-        } for t in summaries])
+        return jsonify([track_payload(t, grids) for t in summaries])
 
     @app.get("/api/tracks/<tid>")
+    @needs_catalog
     def track_detail(tid):
         with database.reading() as q:
             t = q.get_track(id=tid)
@@ -95,32 +169,29 @@ def create_app(run_ingestion=True, database=None):
         })
 
     @app.get("/api/tracks/<tid>/waveform")
+    @needs_catalog
     def waveform(tid):
-        """Downsampled RMS envelope from cached analysis (P4-11: not
-        recomputed client-side). ?bpm= rescales times to that grid variant."""
-        with database.reading() as q:
-            a = q.get_track_analysis(id=tid)
-        if not a:
-            abort(404)
-        points = int(request.args.get("points", 300))
+        """Served from the warmup cache. Native envelopes are always warm;
+        only grid variants (needed after a pair is chosen) can miss, and that
+        miss goes through the same admission gate as everything else."""
+        points = int(request.args.get("points", config.TIMELINE_WAVEFORM_POINTS))
         bpm = request.args.get("bpm", type=float)
-        ratio = (bpm / a["bpm"]) if bpm else 1.0
 
-        rms = np.asarray(a["frames"]["rms"])
-        idx = np.linspace(0, len(rms) - 1, points).astype(int)
-        env = rms[idx]
-        peak = env.max() or 1.0
-        hop_dur = a["frames"]["hop_dur"] / ratio
-        beat_grid = [b / ratio for b in a["beat_grid"]]
-        return jsonify({
-            "points": (env / peak).round(4).tolist(),
-            "duration_s": a["duration_s"] / ratio,
-            "hop_dur": hop_dur,
-            "beat_grid": beat_grid,
-            "bpm": a["bpm"] * ratio,
-        })
+        hit = cache.get(tid, points, bpm)
+        if hit is not None:
+            return jsonify(hit)
+
+        def load():
+            with database.reading() as q:
+                return q.get_track_analysis(id=tid)
+
+        result = cache.get_or_compute(tid, points, bpm, load)
+        if result is None:
+            abort(404)
+        return jsonify(result)
 
     @app.get("/api/tracks/<tid>/audio")
+    @needs_catalog
     def audio(tid):
         bpm = request.args.get("bpm", type=int)
         with database.reading() as q:
@@ -136,14 +207,24 @@ def create_app(run_ingestion=True, database=None):
         abort(404, f"No variant at {bpm} BPM (track may be ND-restricted)")
 
     @app.get("/api/tracks/<tid>/recommendations")
+    @needs_catalog
     def recommendations(tid):
+        """Phase 2 ranking — the first computation that depends on a choice.
+        Waveforms are inlined so the suggestion deck, like the zero-state deck,
+        needs no follow-up requests."""
         timer = Timer(database)
         with timer.stage("recommend", tid):
             with database.reading() as q:
                 recs = matching.recommend(q, tid)
+                for r in recs:
+                    t = q.get_track(id=r["track_id"])
+                    if t:
+                        r["track"] = track_payload(
+                            t, wf_points=config.DECK_WAVEFORM_POINTS)
         return jsonify(recs)
 
     @app.get("/api/transitions")
+    @needs_catalog
     def transitions_api():
         a_id, b_id = request.args.get("a"), request.args.get("b")
         with database.reading() as q:
@@ -176,6 +257,7 @@ def create_app(run_ingestion=True, database=None):
         return jsonify(config.CREDITS)
 
     @app.get("/api/latency")
+    @needs_catalog
     def latency():
         with database.reading() as q:
             rows = q.latency_summary()
@@ -186,4 +268,7 @@ def create_app(run_ingestion=True, database=None):
 
 
 if __name__ == "__main__":
-    create_app().run(host="127.0.0.1", port=5050, debug=False)
+    # Bind immediately and warm in the background so the browser can show a
+    # progress screen rather than hanging on a dead socket.
+    create_app(warmup_async=True).run(host="127.0.0.1", port=5050, debug=False,
+                                      threaded=True)

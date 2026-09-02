@@ -36,7 +36,13 @@ browser suite — nothing in `frontend/` imports a package.
 # → http://127.0.0.1:5050
 ```
 
-**Ingestion runs on startup** from the track list in `config/tracks.json`:
+**Ingestion runs on startup, in the background.** The server binds its port
+immediately and the page shows a progress overlay until the catalog is ready
+(`/api/status` reports phase and progress). Waveform envelopes are precomputed
+during warmup and inlined into the deck payload, so the opening page load makes
+no per-track requests at all.
+
+Ingestion pulls from the track list in `config/tracks.json`:
 fetch → license gate → analysis (BPM/key/beat grid/segments/prefix sums) →
 BPM-grid variant rendering. First start takes ~45 s for the 9-track demo
 catalog (progress prints per track); results are cached in `data/`, so
@@ -66,6 +72,8 @@ license is read from the API and every variant (BY / -SA / -NC / -ND /
 
 ## Using the app
 
+0. The opening deck browses by genre (top 5 each) — nothing is ranked yet,
+   because with no track selected there is nothing to match against.
 1. Drag any track from the deck onto the timeline — it becomes Track 1
    (magenta) and the deck switches to ranked next-track suggestions
    (score % + pie, with BPM/key/energy breakdown on hover).
@@ -90,9 +98,9 @@ license is read from the API and every variant (BY / -SA / -NC / -ND /
 or individually:
 
 ```bash
-cd tests/backend && ../../.venv/bin/python -m unittest discover -s .  # 40, ~6 s
-node --test tests/frontend/*.test.mjs                                 # 42, <1 s
-npm run test:e2e                                                      # 12, ~20 s
+cd tests/backend && ../../.venv/bin/python -m unittest discover -s .  # 62, ~7 s
+node --test tests/frontend/*.test.mjs                                 # 50, <1 s
+npm run test:e2e                                                      # 18, ~23 s
 ```
 
 Test names mirror the testing-document ids (P1-01…P4-29). Backend tests build
@@ -145,7 +153,11 @@ python3 -m backend.benchmark
 
 ```
 backend/            Flask API + pipeline
-  app.py            endpoints, startup ingestion, static serving
+  app.py            endpoints, readiness gating, static serving
+  dbpool.py         bounded connection pool + admission semaphore
+  warmup.py         background ingestion, waveform precompute, readiness
+  waveforms.py      envelope computation + startup cache
+  catalog.py        zero-state deck (genres x N, popularity-aware)
   ingest.py         fetch → gate → analyze → segment → variants
   jamendo.py        track source (jamendo | offline provider seam)
   synth.py          deterministic fixture-track synthesizer
@@ -164,11 +176,11 @@ backend/            Flask API + pipeline
     catalog.py      Database / Catalog interface
   timing.py / benchmark.py / config.py
 frontend/           no-build vanilla ES modules
-  js/{state,align,crossfade,navbar,deck,attribution}.js   pure logic (tested)
+  js/{state,align,crossfade,navbar,deck,attribution,boot}.js  pure logic (tested)
   js/{app,timeline,audio,api}.js                          DOM / canvas / WebAudio
 tests/backend/      unittest — P1/P2/P3 + backend P4 + DB layer P5 (76)
 tests/frontend/     node:test — UI interaction logic P4 (42)
-tests/e2e/          Playwright — browser-only behaviour (12)
+tests/e2e/          Playwright — browser-only behaviour (18)
 config/tracks.json  catalog + source mode
 requirements.txt    backend dependencies
 requirements-postgres.txt   deployment extras (Supabase/PostgreSQL)

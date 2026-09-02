@@ -131,6 +131,23 @@ export async function sampleTimeline(page) {
   }, { colors: COLORS, laneH: MARKER_LANE_H });
 }
 
+/**
+ * Sample the timeline once a frame has actually been painted.
+ *
+ * Drawing is requestAnimationFrame-driven, so sampling immediately after a drop
+ * can catch an empty canvas on a loaded machine — that is a test race, not a
+ * product bug. Poll until the waveform appears rather than assuming one frame
+ * has elapsed.
+ */
+export async function sampleTimelineWhenDrawn(page, { expectTrack2 = false } = {}) {
+  let last = null;
+  await expect.poll(async () => {
+    last = await sampleTimeline(page);
+    return expectTrack2 ? Math.min(last.track1, last.track2) : last.track1;
+  }, { message: "timeline never painted a waveform" }).toBeGreaterThan(0);
+  return last;
+}
+
 /** Collapse marker x-columns into arrows (columns within `gap` px are one arrow). */
 export function countMarkerClusters(columns, gap = 6) {
   if (!columns.length) return 0;

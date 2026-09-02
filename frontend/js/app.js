@@ -4,6 +4,7 @@ import * as state from "./state.js";
 import * as align from "./align.js";
 import * as nav from "./navbar.js";
 import { rankRecommendations, scorePercent, piePath } from "./deck.js";
+import * as boot from "./boot.js";
 import { attributionParts, licenseBadges } from "./attribution.js";
 import { Timeline, COLORS } from "./timeline.js";
 import { Player } from "./audio.js";
@@ -78,12 +79,38 @@ function renderAttributions() {
 }
 
 // ------------------------------------------------------------------- deck
-async function renderDeckAll() {
-  $("#deck-sub").textContent = "All tracks \u2014 pick your opener";
-  const rows = catalog.map((t) => deckRow(t, null));
+// Zero state (nothing selected): there is nothing to match against, so the
+// deck browses by genre rather than pretending to rank. No pair analysis runs
+// until track 1 is chosen.
+async function renderDeckZeroState() {
+  const { groups, per_genre } = await api.deck();
+  $("#deck-sub").textContent =
+    `Browse by genre \u2014 top ${per_genre} per genre; pick your opener`;
+
   const deck = $("#deck");
   deck.innerHTML = "";
-  rows.forEach((r) => deck.appendChild(r));
+  for (const g of groups) {
+    const section = document.createElement("section");
+    section.className = "genre-group";
+
+    const head = document.createElement("div");
+    head.className = "genre-head";
+    const name = document.createElement("span");
+    name.className = "genre-name";
+    name.textContent = g.genre;
+    const count = document.createElement("span");
+    count.className = "genre-count";
+    count.textContent = g.total > g.showing
+      ? `${g.showing} of ${g.total}` : `${g.total}`;
+    head.append(name, count);
+
+    const list = document.createElement("ol");
+    list.className = "deck-list";
+    g.tracks.forEach((t) => list.appendChild(deckRow(t, null)));
+
+    section.append(head, list);
+    deck.appendChild(section);
+  }
 }
 
 async function renderDeckRecommendations(forTrackId) {
@@ -93,10 +120,15 @@ async function renderDeckRecommendations(forTrackId) {
     : "No compatible tracks share a BPM grid with this one.";
   const deck = $("#deck");
   deck.innerHTML = "";
+  const list = document.createElement("ol");
+  list.className = "deck-list";
   recs.forEach((rec) => {
-    const meta = catalog.find((c) => c.id === rec.track_id);
-    deck.appendChild(deckRow(meta, rec));
+    // The API inlines the candidate's metadata and waveform, so ranking the
+    // deck needs no follow-up request either.
+    const meta = rec.track || catalog.find((c) => c.id === rec.track_id);
+    if (meta) list.appendChild(deckRow(meta, rec));
   });
+  deck.appendChild(list);
 }
 
 function deckRow(meta, rec) {
@@ -108,8 +140,13 @@ function deckRow(meta, rec) {
 
   const wf = document.createElement("canvas");
   li.appendChild(wf);
-  api.waveform(meta.id, null, 120).then((w) =>
-    drawMiniWaveform(wf, w.points, mix.tracks.length === 0 ? COLORS.track1 : COLORS.track2));
+  // The envelope ships inline with the deck payload — precomputed once at
+  // server startup, so a deck row costs no request of its own. This is what
+  // removed the boot-time request-per-row fan-out.
+  if (meta.waveform) {
+    drawMiniWaveform(wf, meta.waveform,
+      mix.tracks.length === 0 ? COLORS.track1 : COLORS.track2);
+  }
 
   const m = document.createElement("div");
   m.className = "deck-meta";
@@ -410,11 +447,53 @@ $("#btn-credits").addEventListener("click", async () => {
 });
 
 // ------------------------------------------------------------------- boot
-(async function boot() {
-  catalog = await api.tracks();
-  await renderDeckAll();
-  renderAttributions();
-  updateTimes();
-  requestDraw();
-  requestAnimationFrame(tick);
+// The server binds its port before the catalog exists, so the client waits on
+// /api/status and shows progress. Nothing catalog-backed is fetched or drawn
+// until warmup reports ready — the user never sees a half-built page.
+function paintBootOverlay(status) {
+  $("#boot-message").textContent = boot.statusMessage(status);
+  $("#boot-detail").textContent = boot.statusDetail(status);
+  $("#boot-bar").style.width = `${boot.progressPercent(status)}%`;
+  $(".boot-card").classList.toggle("failed", boot.isFailed(status));
+}
+
+function hideBootOverlay() {
+  const el = $("#boot-overlay");
+  el.classList.add("hidden");
+  // Remove from the tree once faded so it can never trap focus or clicks.
+  setTimeout(() => { el.style.display = "none"; }, 260);
+}
+
+async function waitForCatalog() {
+  for (let attempt = 0; ; attempt++) {
+    let status = null;
+    try {
+      status = await api.status();
+    } catch {
+      // Server not accepting connections yet — keep the overlay up and retry.
+      paintBootOverlay(null);
+    }
+    if (status) {
+      paintBootOverlay(status);
+      if (boot.isReady(status)) return status;
+      if (boot.isFailed(status)) throw new Error(boot.statusMessage(status));
+    }
+    await new Promise((r) => setTimeout(r, boot.pollDelayMs(attempt)));
+  }
+}
+
+(async function boot_() {
+  try {
+    await waitForCatalog();
+    catalog = await api.tracks();
+    await renderDeckZeroState();
+    renderAttributions();
+    updateTimes();
+    requestDraw();
+    requestAnimationFrame(tick);
+    hideBootOverlay();
+  } catch (err) {
+    // Leave the overlay up: a failed warmup means there is no catalog to show.
+    paintBootOverlay({ phase: "failed", error: String(err.message || err) });
+  }
 })();
