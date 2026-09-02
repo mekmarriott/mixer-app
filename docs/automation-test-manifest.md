@@ -19,7 +19,7 @@ grep -rhoE "P[1-4]-[0-9]{2}" tests/ | sort -u
 |---|---|---|---|---|
 | **Backend** | `unittest` (stdlib) | 128 | ~8 s | Pipeline, compliance gates, API contract, startup precompute and DB concurrency. Builds a real 5-track fixture catalog through one full ingestion. |
 | **Frontend logic** | `node:test` (stdlib) | 66 | <1 s | The pure interaction modules (`state`, `align`, `crossfade`, `navbar`, `deck`, `attribution`, `boot`) — no DOM, no WebAudio. |
-| **Browser** | Playwright + Chromium | 24 | ~40 s | What the other two structurally cannot reach: native drag-and-drop, canvas pixels, the WebAudio clock, and real network behaviour. |
+| **Browser** | Playwright + Chromium | 29 | ~52 s | What the other two structurally cannot reach: native drag-and-drop, canvas pixels, the WebAudio clock, and real network behaviour. |
 | **Manual** | a human with ears | 1 | — | Perceptual judgement only. |
 
 ```bash
@@ -119,6 +119,7 @@ manual sign-off list in `design-document.md` §12 before Playwright existed.
 | P4-17 | Overlaps exist only between neighbours in the chain | Logic | `P4-17: overlaps exist only between neighbours`, `P4-17: no overlap when a track starts after its predecessor ends` |
 | P4-18 | Up to 100 tracks; the 101st is refused with a reason | Logic + **Browser** | `P4-18: a mix accepts up to 100 tracks`, `P4-18: a long mix spans hours…` · `P4-18 a mix chains well past the old two-track cap` |
 | P4-18b | Edits ripple rigidly, preserving downstream transitions | Logic + **Browser** | `P4-18b: moving a track ripples the whole tail rigidly`, `…preserves every downstream transition unchanged`, `…inserting in the middle…`, `…deleting in the middle…`, `…can close a transition entirely…` · `P4-18b adding a track ripples the mix longer, never shorter` |
+| P4-19b | Any track can be deleted; the chain heals and persists | Browser | `DEL-01 a middle track is removed and the chain heals`, `DEL-02 the head can be deleted…`, `DEL-03 the tail can be deleted…`, `DEL-04 deletion persists across a reload`, `DEL-05 deleting the only track returns to the zero state` |
 | P4-19 | Overlap adjustable after the snap | Logic | `P4-19: overlap boundaries adjust when track 2 is dragged` |
 | P4-20 | Marker size scales with score, relative to the on-screen set | Logic | `P4-20: marker size is scaled RELATIVE to the candidates on screen`, `…all-equal scores render uniformly…`, `…size is bounded and clamps out-of-range scores` |
 | **P4-21** | **Multiple markers render simultaneously** | **Browser** | `P4-21 multiple transition markers render simultaneously` |

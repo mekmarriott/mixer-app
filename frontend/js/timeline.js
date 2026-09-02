@@ -28,6 +28,8 @@ const CURSOR_HANDLE_H = 12;
 export const CURSOR_GRAB_PX = 9;
 /** The strip along the top: markers plus the playhead ruler, never tracks. */
 export const RULER_H = MARKER_LANE_H;
+const DELETE_BADGE = 16;          // room reserved for the x, in CSS px
+export const BADGE_GRAB_PX = 10;
 
 // A 100-track mix needs more than the two mandated hues. Magenta and blue stay
 // first and second (ui-requirements mandates them for tracks 1 and 2); the rest
@@ -49,6 +51,7 @@ export class Timeline {
     this.mix = null;
     this.waveforms = new Map(); // trackId -> {points, duration_s, beat_grid}
     this.markerGroups = [];
+    this.selected = null;      // index of the selected track, or null
     this.cursor = 0;
     this.hoverMarker = null;
     this.dpr = window.devicePixelRatio || 1;
@@ -155,17 +158,44 @@ export class Timeline {
       const room = x1 - x0;
       if (room < 34 * dpr) return;             // too narrow to label legibly
 
-      const label = this._fit(ctx, track.name || track.id, room - 12 * dpr);
+      const selected = this.selected === idx;
+      if (selected) {
+        // Outline the selected track so it is obvious what Delete will remove.
+        ctx.strokeStyle = trackColor(idx);
+        ctx.lineWidth = 1.5 * dpr;
+        ctx.setLineDash([4 * dpr, 3 * dpr]);
+        ctx.strokeRect(x0 + 1, waveTop + 1, x1 - x0 - 2, waveH - 2);
+        ctx.setLineDash([]);
+      }
+
+      const badge = selected ? DELETE_BADGE : 0;
+      const label = this._fit(ctx, track.name || track.id,
+                              room - (12 + badge) * dpr);
       if (!label) return;
       const tx = x0 + 6 * dpr;
       const ty = H - 7 * dpr;
       // Shadow first: names sit over the waveform and must stay readable.
       ctx.fillStyle = "rgba(12,14,20,0.85)";
       const tw = ctx.measureText(label).width;
-      ctx.fillRect(tx - 3 * dpr, ty - 11 * dpr, tw + 6 * dpr, 15 * dpr);
+      ctx.fillRect(tx - 3 * dpr, ty - 11 * dpr,
+                   tw + (6 + badge) * dpr, 15 * dpr);
       ctx.fillStyle = trackColor(idx);
       ctx.fillText(label, tx, ty);
+
+      if (selected) {
+        // A visible target beats a hidden shortcut; the Delete key also works.
+        const bx = tx + tw + 8 * dpr;
+        ctx.strokeStyle = "#ff6b6b";
+        ctx.lineWidth = 1.6 * dpr;
+        const r = 4 * dpr;
+        ctx.beginPath();
+        ctx.moveTo(bx - r, ty - 4 * dpr - r); ctx.lineTo(bx + r, ty - 4 * dpr + r);
+        ctx.moveTo(bx + r, ty - 4 * dpr - r); ctx.lineTo(bx - r, ty - 4 * dpr + r);
+        ctx.stroke();
+        this._deleteBadge = { idx, x: bx / dpr, y: (ty - 4 * dpr) / dpr };
+      }
     });
+    if (this.selected === null) this._deleteBadge = null;
 
     // Marker lane (P4-20, P4-21): gold arrows atop the window, size = score.
     ctx.strokeStyle = "rgba(255,194,75,0.25)";
@@ -229,6 +259,14 @@ export class Timeline {
 
   // Hit-testing helpers used by app.js pointer handlers.
   pxToTimeLocal(px) { return pxToTime(this.vp, px * this.dpr, this.canvas.width); }
+
+  /** Is the pointer on the selected track's delete badge? */
+  deleteBadgeAtPoint(px, py) {
+    const b = this._deleteBadge;
+    if (!b) return null;
+    return (Math.abs(px - b.x) <= BADGE_GRAB_PX &&
+            Math.abs(py - b.y) <= BADGE_GRAB_PX) ? b.idx : null;
+  }
 
   /**
    * Is the pointer on the playhead?

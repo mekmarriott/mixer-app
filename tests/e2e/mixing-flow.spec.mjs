@@ -145,10 +145,24 @@ test.describe("transition markers across a chain", () => {
     const threeTrack = await sampleTimelineWhenDrawn(page, { expectTrack2: true });
     const allJunctions = countMarkerClusters(threeTrack.markerColumns);
 
-    // Markers from two junctions, spread across the mix rather than clustered
-    // at one point.
-    expect(allJunctions).toBeGreaterThan(firstJunction);
+    // Arrow COUNT is the wrong measure: a junction shows at most MARKER_TOP_N
+    // candidates, they can overlap on screen, and some fall outside the
+    // viewport. The property that actually distinguishes "both junctions have
+    // markers" from "only the newest does" is that markers appear in two
+    // well-separated places along the mix.
+    expect(allJunctions).toBeGreaterThan(0);
     const cols = threeTrack.markerColumns;
-    expect(cols[cols.length - 1] - cols[0]).toBeGreaterThan(threeTrack.width * 0.25);
+    const span = cols[cols.length - 1] - cols[0];
+    expect(span, "markers are clustered at a single junction")
+      .toBeGreaterThan(threeTrack.width * 0.25);
+
+    // Two groups: somewhere there is a gap far larger than the spacing between
+    // candidates within one junction.
+    let biggestGap = 0;
+    for (let i = 1; i < cols.length; i++) {
+      biggestGap = Math.max(biggestGap, cols[i] - cols[i - 1]);
+    }
+    expect(biggestGap, "no separation between junction marker groups")
+      .toBeGreaterThan(threeTrack.width * 0.1);
   });
 });

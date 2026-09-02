@@ -29,10 +29,17 @@ test.describe("zero state", () => {
   });
 
   test("ZS-02 the opening page load makes no per-track waveform requests", async ({ page }) => {
+    // Land on a fresh, empty mix FIRST. Boot resumes the most recently edited
+    // mix, and resuming one that has tracks legitimately fetches their
+    // waveforms — that is not what this test is about. Measure the load that
+    // lands in the zero state.
+    await bootApp(page);
+
     const requests = [];
     page.on("request", (r) => requests.push(new URL(r.url()).pathname + new URL(r.url()).search));
-
-    await bootApp(page);
+    await page.reload();
+    await expect(page.locator("#deck .deck-row").first()).toBeVisible({ timeout: 60_000 });
+    await page.waitForLoadState("networkidle");
 
     // Waveforms are precomputed at server startup and inlined into /api/deck.
     // A request-per-row here was the old boot fan-out that triggered API-01.

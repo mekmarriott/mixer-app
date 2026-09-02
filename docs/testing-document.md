@@ -89,6 +89,7 @@
 - [ ] **P4-18** A mix accepts up to 100 tracks; the 101st is refused with a user-facing reason (raised from 2 — see `ui-requirements.md` §Overlay)
 - [ ] **P4-18b** Edits ripple rigidly: moving, inserting or deleting a track shifts every downstream track by the same amount, leaving later transitions unchanged
 - [ ] **P4-19** After the initial snap, overlap boundaries remain adjustable via drag
+- [ ] **P4-19b** Any track can be deleted — first, middle or last. The track immediately after the deleted one drops onto the best transition point with its **new** predecessor; everything after that keeps its transition relative to its own predecessor. Deleting the head makes the successor the start of the mix. Deletion persists
 
 ### Mixing markers
 - [ ] **P4-20** Marker size scales with the transition-window score, **relative to the candidate set on screen**, so differences within one pair's narrow score band remain visible

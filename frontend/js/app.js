@@ -375,6 +375,7 @@ wrap.addEventListener("drop", async (e) => {
 // impossible. Clicking bare canvas still seeks, as before.
 let dragging = null;
 let scrubbing = null;
+let selectedIndex = null;   // track selected for deletion
 const tlCanvas = $("#timeline");
 function seekTo(t) {
   const clamped = Math.max(0, Math.min(t, state.totalDuration(mix)));
@@ -407,7 +408,20 @@ tlCanvas.addEventListener("pointerdown", (e) => {
     return;
   }
 
-  const idx = timeline.trackAtPoint(px, e.clientY - rect.top);
+  // The delete badge on the selected track, before anything beneath it.
+  const badge = timeline.deleteBadgeAtPoint(px, localY);
+  if (badge !== null) {
+    deleteTrackAt(badge);
+    return;
+  }
+
+  const idx = timeline.trackAtPoint(px, localY);
+  // Clicking a track selects it — that is what Delete acts on.
+  if (idx !== timeline.selected) {
+    selectedIndex = idx;
+    timeline.selected = idx;
+    requestDraw();
+  }
   // Any track after the first can be dragged; the first anchors the mix.
   if (idx !== null && idx > 0) {
     dragging = {
@@ -502,6 +516,20 @@ function beatAttractors() {
   for (let t = grid[grid.length - 1] ?? 0; t < total; t += beat) grid.push(t + beat);
   return grid;
 }
+
+// Delete/Backspace removes the selected track. Ignored while typing in the
+// title, which is a contenteditable and owns those keys.
+window.addEventListener("keydown", (e) => {
+  if (e.key !== "Delete" && e.key !== "Backspace") return;
+  const el = document.activeElement;
+  if (el && (el.isContentEditable || el.tagName === "INPUT" || el.tagName === "SELECT")) return;
+  if (selectedIndex === null || !mix.tracks[selectedIndex]) return;
+  e.preventDefault();
+  const idx = selectedIndex;
+  selectedIndex = null;
+  timeline.selected = null;
+  deleteTrackAt(idx);
+});
 
 // ------------------------------------------------------------------ navbar
 const nbCanvas = $("#navbar");
@@ -655,6 +683,8 @@ async function showZeroState() {
   mix.tracks.length = 0;
   mixNodeIds = [];
   junctions.clear();
+  selectedIndex = null;
+  timeline.selected = null;
   currentTransition = null;
   gridBpm = null;
   timeline.setMarkerGroups([]);
@@ -795,6 +825,89 @@ function syncMarkerGroups() {
     groups.push({ origin: offs[leftIndex] ?? 0, markers: data.markers });
   }
   timeline.setMarkerGroups(groups);
+}
+
+/**
+ * Refetch every junction's transition curve and re-grid the tracks.
+ *
+ * Called after a structural edit (delete, and on load), because removing a
+ * track creates a junction between two tracks that were never neighbours: the
+ * curve, and possibly the shared grid BPM, are both different.
+ */
+async function refreshJunctions() {
+  junctions.clear();
+  if (mix.tracks.length < 2) { syncMarkerGroups(); return; }
+
+  await Promise.all(mix.tracks.slice(0, -1).map(async (trk, i) => {
+    const next = mix.tracks[i + 1];
+    try {
+      const tr = await api.transitions(trk.id, next.id);
+      junctions.set(i, { markers: tr.markers, gridBpm: tr.grid_bpm });
+      if (i === mix.tracks.length - 2) { currentTransition = tr; gridBpm = tr.grid_bpm; }
+    } catch {
+      // No shared grid for this pair: no markers, and nothing to snap to.
+    }
+  }));
+
+  // A changed grid BPM changes a track's rendered length, so the waveform has
+  // to follow or the timeline would draw the wrong duration.
+  await Promise.all(mix.tracks.map(async (trk, i) => {
+    const grid = junctions.get(i)?.gridBpm ?? junctions.get(i - 1)?.gridBpm ?? null;
+    if (grid == null || trk.bpm === grid) return;
+    const wf = await api.waveform(trk.id, grid);
+    trk.bpm = grid;
+    trk.duration = wf.duration_s;
+    timeline.setWaveform(trk.id, wf);
+    await player.load(trk.id, grid);
+  }));
+  syncMarkerGroups();
+}
+
+/**
+ * Remove a track and heal the chain.
+ *
+ * The successor drops onto the BEST transition point with its new predecessor
+ * — the two were never neighbours, so its old gap is meaningless. Everything
+ * after the successor keeps its own delta, so those transitions survive
+ * exactly as they were (rigid ripple).
+ *
+ * Deleting the head is the one case with no re-snap to make: the successor
+ * becomes the start of the mix.
+ */
+async function deleteTrackAt(index) {
+  const track = mix.tracks[index];
+  if (!track) return;
+
+  state.removeTrack(mix, track.id);
+  mixNodeIds.splice(index, 1);
+  if (selectedIndex !== null && selectedIndex >= mix.tracks.length) selectedIndex = null;
+
+  await refreshJunctions();
+
+  if (index === 0) {
+    // New head: a leading delta is an absolute start.
+    if (mix.tracks.length) state.setDelta(mix, mix.tracks[0].id, 0);
+  } else if (index < mix.tracks.length) {
+    // The successor now follows a track it never followed before.
+    const markers = junctions.get(index - 1)?.markers ?? [];
+    const snapped = markers.length
+      ? align.snapOffset(markers)
+      : state.minOffsetFor(mix, index) - state.offsets(mix)[index - 1];
+    state.setDelta(mix, mix.tracks[index].id, Math.max(0, snapped));
+  }
+
+  syncMarkerGroups();
+  nav.setTotal(vp, state.totalDuration(mix));
+  if (!mix.tracks.length) {
+    await showZeroState();
+  } else {
+    await renderDeckRecommendations(mix.tracks[mix.tracks.length - 1].id);
+    renderAttributions();
+    updateTimes();
+    requestDraw();
+  }
+  await saveChain();
+  toast(`Removed \u201c${track.name}\u201d`);
 }
 
 /** Markers that govern where track `index` may start (its left junction). */
