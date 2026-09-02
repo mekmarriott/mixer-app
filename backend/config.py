@@ -309,6 +309,11 @@ FADE_MAX_BARS = FADE_BARS_LADDER[-1]
 # stepped down the ladder. Sparse entry sections are short — a strict bound
 # would pin most transitions to the shortest rung.
 FADE_ROOM_TOLERANCE = 2.0
+# What a fade is assumed to be when the chain does not record one — a mix
+# written before the length was stored with it. The client assumes the same
+# (frontend/js/crossfade.DEFAULT_FADE_BARS); if the two disagreed, the UI would
+# offer placements the API refuses.
+DEFAULT_FADE_BARS = 8
 
 CREDITS = [
     {"name": "Essentia", "license": "AGPL-3.0", "url": "https://essentia.upf.edu/licensing_information.html",

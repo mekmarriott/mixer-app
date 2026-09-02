@@ -10,7 +10,7 @@ import unittest
 
 from fixture import get_fixture
 
-from backend import mixes
+from backend import config, mixes
 from backend.app import create_app
 
 
@@ -77,10 +77,18 @@ class TestOverlapInvariant(unittest.TestCase):
         # That IS the crossfade.
         mixes.check_overlaps(self.entries([0, 45, 90]))
 
-    def test_mix_02_a_third_track_may_not_reach_the_first(self):
+    def test_mix_02_a_third_track_may_not_start_while_the_first_sounds(self):
+        """t1 enters at 20s and takes 16s (8 bars at 120) to fade t0 out, so
+        t0 is audible until 36s. A third track at 30s makes three."""
         with self.assertRaises(mixes.ChainError) as ctx:
-            mixes.check_overlaps(self.entries([0, 20, 40]))   # t2 starts inside t0
+            mixes.check_overlaps(self.entries([0, 20, 30]))
         self.assertIn("still audible", str(ctx.exception))
+
+    def test_mix_02_a_third_track_may_overlap_a_faded_out_first(self):
+        """Same geometry past the fade: t2 at 40s overlaps t0's remaining
+        AUDIO, which is silent by then. Three tracks in time, two in the ear —
+        which is the thing the rule protects."""
+        mixes.check_overlaps(self.entries([0, 20, 40]))
 
     def test_mix_02_a_faded_out_track_does_not_block(self):
         """A track is over once its fade reaches zero, not when its audio ends.
@@ -107,8 +115,11 @@ class TestOverlapInvariant(unittest.TestCase):
         mixes.check_overlaps(self.entries([0, 30, 60]))
 
     def test_mix_02_checks_every_window_not_just_the_first(self):
+        # Every junction here is legal except the last. t2 runs 120-180s and
+        # t3 enters at 150s, so t2 is audible until 150+16=166s; t4 arriving at
+        # 158s is the breach, and only the final window catches it.
         with self.assertRaises(mixes.ChainError):
-            mixes.check_overlaps(self.entries([0, 60, 120, 150, 170]))
+            mixes.check_overlaps(self.entries([0, 60, 120, 150, 158]))
 
     def test_mix_02_short_chains_are_always_legal(self):
         mixes.check_overlaps(self.entries([0]))
@@ -209,7 +220,7 @@ class TestMixApi(unittest.TestCase):
         r = self.client.put(f"/api/mixes/{m['id']}/tracks", json={"tracks": [
             {"track_id": ids[0], "delta_beats": 0, "grid_bpm": 124},
             {"track_id": ids[1], "delta_beats": 41, "grid_bpm": 124},
-            {"track_id": ids[2], "delta_beats": 41, "grid_bpm": 124},
+            {"track_id": ids[2], "delta_beats": 4, "grid_bpm": 124},
         ]})
         self.assertEqual(r.status_code, 409)
         self.assertIn("still audible", r.get_json()["detail"])
@@ -390,3 +401,58 @@ class TestDurationBasis(unittest.TestCase):
             {"track_id": others[1], "delta_beats": third_beats, "grid_bpm": grid},
         ]})
         self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
+
+
+class TestDragUsesTheSameRuleAsTheChainWrite(unittest.TestCase):
+    """A drag must be refused exactly when a chain write would be.
+
+    set_delta rebuilds the chain to validate a single move. It used to rebuild
+    it without each row's fade_s, so audible_end fell back to "plays out in
+    full" and the move was measured against a stricter rule than the one that
+    wrote the chain — the same placement accepted by PUT and rejected by PATCH.
+    """
+
+    @staticmethod
+    def entries(starts, fade_s, duration=60.0):
+        return [{"track_id": f"t{i}", "offset_s": s, "duration_s": duration,
+                 "delta_s": s - (starts[i - 1] if i else 0), "grid_bpm": 120,
+                 "fade_s": fade_s}
+                for i, s in enumerate(starts)]
+
+    def test_a_short_fade_frees_the_tail_for_a_later_track(self):
+        mixes.check_overlaps(self.entries([0, 20, 30], fade_s=5.0))
+
+    def test_dropping_the_fade_would_refuse_the_same_chain(self):
+        without = self.entries([0, 20, 30], fade_s=5.0)
+        for e in without:
+            e.pop("fade_s")
+        with self.assertRaises(mixes.ChainError):
+            mixes.check_overlaps(without)
+
+
+class TestFadeFallbackMatchesTheClient(unittest.TestCase):
+    """An unrecorded fade must mean the same thing on both sides.
+
+    Chains written before fade lengths were stored carry none. The UI assumes
+    a default (crossfade.DEFAULT_FADE_BARS) when it clamps a drag; if the API
+    assumed the track played out in full instead, it would refuse placements
+    the UI had already drawn as legal — a drag that snaps back for no reason.
+    """
+
+    @staticmethod
+    def entries(starts, duration=60.0, grid=120):
+        return [{"track_id": f"t{i}", "offset_s": s, "duration_s": duration,
+                 "delta_s": s - (starts[i - 1] if i else 0), "grid_bpm": grid}
+                for i, s in enumerate(starts)]
+
+    def test_default_fade_is_assumed_when_none_is_recorded(self):
+        # 8 bars at 120 BPM is 16s, so t0 is silent from 20+16=36s and a third
+        # track at 40s is legal even though t0's audio runs to 60s.
+        mixes.check_overlaps(self.entries([0, 20, 40]))
+
+    def test_still_refused_while_the_default_fade_is_running(self):
+        with self.assertRaises(mixes.ChainError):
+            mixes.check_overlaps(self.entries([0, 20, 30]))
+
+    def test_the_assumed_length_is_the_one_the_client_uses(self):
+        self.assertEqual(config.DEFAULT_FADE_BARS, 8)

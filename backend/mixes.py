@@ -17,6 +17,10 @@ Beats, not seconds, are the stored unit: an off-grid placement is then not
 representable at all, rather than merely rejected by the UI.
 """
 import time
+
+from . import config
+
+from . import config
 import uuid
 
 # A mix is a chain of pairwise transitions. Three tracks sounding at once is
@@ -119,6 +123,13 @@ def audible_end(entries, i):
     if overlap_start >= own_end:
         return own_end                      # they never overlap; it plays out
     fade = nxt.get("fade_s")
+    if not fade:
+        # A chain written before fade lengths were stored records none. Assume
+        # the same default the client does rather than the whole track: taking
+        # the audio's end here would refuse placements the UI has already
+        # drawn as legal, which is a drag that snaps back for no visible reason.
+        grid = nxt.get("grid_bpm")
+        fade = (config.DEFAULT_FADE_BARS * 4 * (60.0 / grid)) if grid else None
     if not fade:
         return own_end
     return min(own_end, overlap_start + fade)
@@ -274,9 +285,14 @@ class MixRepository:
         if index is None:
             raise ChainError(f"node {node_id} is not in mix {mix_id}")
 
+        # fade_s travels with each row, because the overlap rule measures to
+        # where a track's fade reaches zero rather than to the end of its
+        # audio. Dropping it here made every drag fall back to "assume it plays
+        # out in full", which refuses placements the chain write accepts — the
+        # same edit rejected on PATCH and allowed on PUT.
         proposed = [
             {"track_id": r.track_id, "delta_beats": int(delta_beats) if i == index
-             else r.delta_beats, "grid_bpm": r.grid_bpm}
+             else r.delta_beats, "grid_bpm": r.grid_bpm, "fade_s": r.fade_s}
             for i, r in enumerate(ordered)
         ]
         entries, start = [], 0.0
