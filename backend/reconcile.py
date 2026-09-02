@@ -94,6 +94,53 @@ def _drift(source, key, stored_size, claimed, sample_rate):
     return None
 
 
+def catalog_gaps(database):
+    """Rows the object audit cannot see, because they name no object.
+
+    `catalog_index` can only compare keys the catalog actually holds, so a row
+    with no `audio_key` — or a mixable track whose variant rows were never
+    written — is invisible to it: nothing is missing from the store, because
+    nothing was ever claimed. That is the one shape of "catalog item with no
+    blob" the rest of this module structurally cannot report, which makes it
+    worth reporting separately rather than leaving to be noticed in the app.
+
+    Returns `(unpublished, incomplete)`:
+
+    * **unpublished** — a track row carrying no master key, or one with no
+      duration to check it against. Legitimate for an ND track, which is
+      recorded precisely so the licence decision is not re-litigated and is
+      never given audio; anything else is an ingest that stopped halfway.
+    * **incomplete** — a mixable track missing some of the grid points its
+      analysed BPM calls for. Its master and existing variants all verify, so
+      every other check here passes while the track is only partly mixable.
+    """
+    from . import bpm_grid
+
+    with database.reading() as q:
+        tracks = q.list_tracks()
+        variants = q.list_all_variants()
+
+    have = {}
+    for v in variants:
+        have.setdefault(v.track_id, set()).add(v.grid_bpm)
+
+    unpublished, incomplete = [], []
+    for t in tracks:
+        if not t.audio_key or t.duration_s is None:
+            unpublished.append({"id": t.id, "mixable": t.mixable,
+                                "status": t.status, "licence": t.license})
+            continue
+        if not t.mixable or t.native_bpm is None:
+            continue
+        band = bpm_grid.resolve_bucket(t.genre, t.native_bpm)
+        missing = sorted(set(bpm_grid.grid_points(t.native_bpm, band))
+                         - have.get(t.id, set()))
+        if missing:
+            incomplete.append({"id": t.id, "native_bpm": t.native_bpm,
+                               "band": band, "missing": missing})
+    return unpublished, incomplete
+
+
 def catalog_index(database):
     """`{key: (duration_s, description)}` for every object the catalog names."""
     with database.reading() as q:
@@ -146,8 +193,10 @@ def plan(database, store, source, sample_rate=None, prefix=""):
             matched.append(key)
 
     orphans = [k for k in sorted(present) if k not in wanted]
+    unpublished, incomplete = ([], []) if prefix else catalog_gaps(database)
     return {"matched": matched, "missing": missing, "stale": stale,
             "unfixable": unfixable, "orphans": orphans,
+            "unpublished": unpublished, "incomplete": incomplete,
             "catalog_keys": len(wanted), "store_keys": len(present)}
 
 
@@ -189,6 +238,10 @@ def report(p, out=print):
     out("  orphaned in store   : %d" % len(p["orphans"]))
     if p["unfixable"]:
         out("  UNFIXABLE HERE      : %d" % len(p["unfixable"]))
+    if p.get("unpublished"):
+        out("  rows naming NO object: %d" % len(p["unpublished"]))
+    if p.get("incomplete"):
+        out("  tracks missing variants: %d" % len(p["incomplete"]))
     for entry in p["missing"]:
         out("    absent  %-32s %s (%.3fs)"
             % (entry["key"], entry["what"], entry["claimed"]))
@@ -199,6 +252,14 @@ def report(p, out=print):
     for entry in p["unfixable"]:
         out("    NO LOCAL SOURCE  %-28s %s — re-ingest this track"
             % (entry["key"], entry["what"]))
+    for entry in p.get("unpublished", []):
+        out("    NO OBJECT  track %-12s status=%s mixable=%s licence=%s"
+            % (entry["id"], entry["status"], entry["mixable"],
+               entry["licence"]))
+    for entry in p.get("incomplete", []):
+        out("    PARTIAL    track %-12s %.1f BPM in %s, missing %s"
+            % (entry["id"], entry["native_bpm"], entry["band"],
+               entry["missing"]))
 
 
 def _progress(message):

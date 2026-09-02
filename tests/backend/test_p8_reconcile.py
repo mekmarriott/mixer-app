@@ -16,7 +16,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from backend import config, reconcile, storage           # noqa: E402
+from backend import bpm_grid, config, reconcile, storage           # noqa: E402
 from backend.audio_io import save_wav                    # noqa: E402
 from backend.db import Database                          # noqa: E402
 
@@ -167,6 +167,88 @@ class TestApply(ReconcileCase):
         second = reconcile.apply_plan(self.plan(), self.store, self.source,
                                       progress=lambda *_: None)
         self.assertEqual(second["uploaded"], [])
+
+
+class TestCatalogGaps(ReconcileCase):
+    """Rows the object audit cannot see because they name no object.
+
+    The store comparison can only check keys the catalog holds, so a track with
+    no master key, or a mixable track whose variant rows were never written,
+    passes every other check while being unusable.
+    """
+
+    def add_full_track(self, tid, bpm=124.0):
+        with self.database.writing() as q:
+            q.upsert_track(id=tid, name="n", artist="a", genre="house",
+                           license="CC BY 3.0", license_nd=False,
+                           license_sa=False, license_nc=False, mixable=True,
+                           native_bpm=bpm, camelot="8A", duration_s=10.0,
+                           audio_key=storage.master_key(tid),
+                           analysis_json=None, segments_json=None,
+                           status="ready", status_error=None, source_url=None,
+                           fetched_at=None, analyzed_at=None, ready_at=None)
+        for g in bpm_grid.grid_points(bpm, "house"):
+            self.add_variant(tid, g, 10.0)
+        return tid
+
+    def test_a_row_with_no_master_key_is_reported(self):
+        with self.database.writing() as q:
+            q.upsert_track(id="1", name="n", artist="a", genre="house",
+                           license="CC BY-NC-ND 3.0", license_nd=True,
+                           license_sa=False, license_nc=True, mixable=False,
+                           native_bpm=None, camelot=None, duration_s=None,
+                           audio_key=None, analysis_json=None,
+                           segments_json=None, status="pending",
+                           status_error=None, source_url=None,
+                           fetched_at=None, analyzed_at=None, ready_at=None)
+        unpublished, incomplete = reconcile.catalog_gaps(self.database)
+        self.assertEqual([u["id"] for u in unpublished], ["1"])
+        self.assertEqual(incomplete, [])
+
+    def test_a_key_without_a_duration_is_reported(self):
+        """catalog_index skips these too, so the store audit never sees them."""
+        with self.database.writing() as q:
+            q.upsert_track(id="1", name="n", artist="a", genre="house",
+                           license="CC BY 3.0", license_nd=False,
+                           license_sa=False, license_nc=False, mixable=True,
+                           native_bpm=124.0, camelot="8A", duration_s=None,
+                           audio_key="audio/1.m4a", analysis_json=None,
+                           segments_json=None, status="fetched",
+                           status_error=None, source_url=None,
+                           fetched_at=None, analyzed_at=None, ready_at=None)
+        unpublished, _ = reconcile.catalog_gaps(self.database)
+        self.assertEqual([u["id"] for u in unpublished], ["1"])
+
+    def test_a_mixable_track_missing_grid_points_is_reported(self):
+        tid = self.add_full_track("1")
+        with self.database.writing() as q:
+            q.delete_variants_for_track(track_id=tid)
+        self.add_variant(tid, bpm_grid.grid_points(124.0, "house")[0], 10.0)
+        _unpublished, incomplete = reconcile.catalog_gaps(self.database)
+        self.assertEqual([i["id"] for i in incomplete], [tid])
+        self.assertTrue(incomplete[0]["missing"])
+
+    def test_a_complete_track_is_reported_by_neither(self):
+        self.add_full_track("1")
+        unpublished, incomplete = reconcile.catalog_gaps(self.database)
+        self.assertEqual(unpublished, [])
+        self.assertEqual(incomplete, [])
+
+    def test_plan_surfaces_the_gaps_alongside_the_store_findings(self):
+        self.add_full_track("1")
+        with self.database.writing() as q:
+            q.delete_variants_for_track(track_id="1")
+        p = self.plan()
+        self.assertEqual([i["id"] for i in p["incomplete"]], ["1"])
+
+    def test_a_prefix_run_does_not_claim_to_have_audited_the_catalog(self):
+        """Narrowed to one key class, it has not looked at whole rows."""
+        self.add_full_track("1")
+        with self.database.writing() as q:
+            q.delete_variants_for_track(track_id="1")
+        p = reconcile.plan(self.database, self.store, self.source,
+                           prefix="audio/")
+        self.assertEqual(p["incomplete"], [])
 
 
 class TestPrefixFilter(ReconcileCase):

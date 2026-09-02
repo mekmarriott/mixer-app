@@ -48,6 +48,7 @@ from pathlib import Path
 
 from . import bpm_grid, config, jamendo, licensing, ratelimit, storage
 from . import analysis as analysis_mod
+from .db import status as status_mod
 from . import segmentation, stretch
 from .audio_io import load_wav
 
@@ -356,6 +357,20 @@ def publish(database, entries, mode, store=None, workers=None, io_workers=2,
 
     for row in rows:
         variants = row.pop("variants", [])
+        # A row only reaches here once its master is in the store and every
+        # variant its grid calls for has been rendered — which is exactly what
+        # READY means. Nothing else set it: save_ingested_track defaults an
+        # unspecified status to PENDING, and unlike ingest.py this path never
+        # called advance_status, so every batch-published track stayed
+        # `pending` forever. That is not cosmetic. The app filters the deck and
+        # the track listing on `status == READY` ("never show a partial"), so a
+        # fully published catalog was invisible in the UI while its audio sat
+        # in the store, correctly uploaded and never offered to anyone.
+        stamped = time.time()
+        row.setdefault("status", status_mod.READY)
+        row.setdefault("fetched_at", stamped)
+        row.setdefault("analyzed_at", stamped)
+        row.setdefault("ready_at", stamped)
         # One transaction per track, in this process only: workers return
         # plain dicts and never touch the database.
         database.catalog.save_ingested_track(row, variants)
