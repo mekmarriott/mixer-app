@@ -18,6 +18,25 @@ timeline.setMix(mix);
 const player = new Player();
 
 let catalog = [];
+// Track metadata by id, from every source the UI has seen.
+//
+// `catalog` is only the WARMED subset: /api/tracks returns the tracks whose
+// analysis was precomputed at startup, but the deck ranks against the whole
+// library and inlines the metadata for candidates outside that subset. Looking
+// a dragged track up in `catalog` alone therefore missed most deck rows, and
+// the drop threw on `meta.id` before anything was added to the mix — the drag
+// simply appeared to do nothing. Every lookup goes through `trackMeta` so a
+// track the user can SEE is always a track the user can ADD.
+const metaSeen = new Map();
+
+function rememberMeta(meta) {
+  if (meta && meta.id != null) metaSeen.set(meta.id, meta);
+  return meta;
+}
+
+function trackMeta(id) {
+  return metaSeen.get(id) || catalog.find((c) => c.id === id) || null;
+}
 let currentTransition = null;
 let gridBpm = null;
 // Markers for EVERY junction, keyed by the index of the junction's left track.
@@ -142,7 +161,7 @@ function renderAttributions() {
   const el = $("#attributions");
   el.innerHTML = "";
   mix.tracks.forEach((t, idx) => {
-    const meta = catalog.find((c) => c.id === t.id);
+    const meta = trackMeta(t.id);
     if (!meta) return;
     const parts = attributionParts(meta.attribution);
     const span = document.createElement("span");
@@ -211,7 +230,7 @@ async function renderDeckRecommendations(forTrackId) {
   recs.forEach((rec) => {
     // The API inlines the candidate's metadata and waveform, so ranking the
     // deck needs no follow-up request either.
-    const meta = rec.track || catalog.find((c) => c.id === rec.track_id);
+    const meta = rememberMeta(rec.track) || trackMeta(rec.track_id);
     if (meta) list.appendChild(deckRow(meta, rec));
   });
   deck.appendChild(list);
@@ -277,7 +296,8 @@ function deckRow(meta, rec) {
 
 // -------------------------------------------------------------- add tracks
 async function addFirstTrack(trackId) {
-  const meta = catalog.find((c) => c.id === trackId);
+  const meta = trackMeta(trackId);
+  if (!meta) return toast("That track is no longer available.");
   const res = state.addTrack(mix, {
     id: meta.id, name: meta.name, artist: meta.artist,
     duration: meta.duration_s, bpm: null,
@@ -300,6 +320,8 @@ async function addFirstTrack(trackId) {
 // Append the next track in the chain. Pair analysis is always against the
 // CURRENT LAST track — that is the only junction the new track creates.
 async function addNextTrack(trackId) {
+  const meta = trackMeta(trackId);
+  if (!meta) return toast("That track is no longer available.");
   const lastIndex = mix.tracks.length - 1;
   const a = mix.tracks[lastIndex];
   const tr = await api.transitions(a.id, trackId);
@@ -316,7 +338,6 @@ async function addNextTrack(trackId) {
   a.duration = wfA.duration_s;
   timeline.setWaveform(a.id, wfA);
 
-  const meta = catalog.find((c) => c.id === trackId);
   // The marker offset is relative to the PREVIOUS track's start, which is
   // exactly what a delta is — so the snap needs no conversion.
   // Add provisionally, then place. The floor depends on the chain geometry —
@@ -742,8 +763,9 @@ async function loadMix(id) {
   gridBpm = data.tracks[data.tracks.length - 1].grid_bpm || null;
 
   for (const entry of data.tracks) {
-    const meta = catalog.find((c) => c.id === entry.track_id);
+    const meta = trackMeta(entry.track_id) || await api.track(entry.track_id).catch(() => null);
     if (!meta) continue;
+    rememberMeta(meta);
     const wf = await api.waveform(entry.track_id, entry.grid_bpm);
     timeline.setWaveform(entry.track_id, wf);
     state.addTrack(mix, {
@@ -967,6 +989,7 @@ async function waitForCatalog() {
   try {
     await waitForCatalog();
     catalog = await api.tracks();
+    catalog.forEach(rememberMeta);
 
     // Resume the most recently edited mix; if there are none, start one so
     // that everything the user does from here is already being saved.
