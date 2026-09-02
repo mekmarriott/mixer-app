@@ -20,9 +20,15 @@ Output is a plain dict (JSON-serializable) cached by the ingestion pipeline.
 import os
 
 import numpy as np
-from scipy import signal as sp_signal
 
 from . import config
+
+# scipy is imported lazily inside _stft_mag rather than at module scope.
+# matching.py imports window_mean from here and app.py imports
+# rescale_analysis, so a top-level scipy import would pull the whole scipy tree
+# into every API cold start — against a 250 MB serverless bundle limit, for
+# code the request path never executes. Only _stft_mag (ingest-time) needs it.
+# See docs/infrastructure-plan.md §1.3.
 
 # Essentia's rhythm/key extractors carry 44.1 kHz assumptions in their internal
 # frame sizes and tuning; several (RhythmExtractor2013 among them) expose no
@@ -171,6 +177,7 @@ def _analyze_essentia(samples, sr):
 # --------------------------------------------------------------- fallback path
 
 def _stft_mag(samples, sr):
+    from scipy import signal as sp_signal      # lazy: see module header
     f, t, z = sp_signal.stft(samples, fs=sr, nperseg=config.FRAME_SIZE,
                              noverlap=config.FRAME_SIZE - config.HOP_SIZE, padded=False)
     return f, t, np.abs(z)

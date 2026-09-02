@@ -10,9 +10,16 @@ what lets the opening page load without a single per-track database read.
 import threading
 import time
 
-from . import config, deck, ingest, licensing
+from . import config, deck, licensing
 from .db import status as db_status
 from .timing import Timer
+
+# `ingest` is imported lazily inside _ingest() rather than at module scope. It
+# pulls in analysis/stretch/synth and, through them, scipy (105 MB installed) —
+# none of which the request path executes. app.py imports this module at module
+# scope, so a top-level import here would put the whole scipy tree into every
+# serverless cold start, against a 250 MB bundle limit.
+# See docs/infrastructure-plan.md §1.3.
 
 # Phases, in order. Everything except `ready` and `failed` is transient.
 INGESTING = "ingesting"
@@ -112,6 +119,7 @@ class Warmup:
                 continue
             self._set(message=f"Analyzing {entry.get('name', entry['id'])}"
                               f" ({i}/{len(entries)})")
+            from . import ingest      # lazy: see module header
             try:
                 ingest.ingest_track(self.database, entry, cfg["mode"], timer)
             except Exception as exc:

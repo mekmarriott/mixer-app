@@ -23,22 +23,33 @@ these measurements by backend/benchmark.py).
 from pathlib import Path
 
 from . import analysis as analysis_mod
-from . import bpm_grid, config, db, jamendo, licensing, segmentation, stretch
+from . import (bpm_grid, config, db, jamendo, licensing, segmentation, storage,
+               stretch)
 from .audio_io import load_wav, save_wav, wav_duration
 from .timing import Timer
 
 status = db.status
 
 
-def _master_path(track_id):
-    return config.AUDIO_DIR / f"{track_id}.wav"
+# Audio is addressed by object key rather than filesystem path
+# (backend/storage.py), so the same pipeline works against local disk in
+# development and a cloud bucket in deployment. The local backend still hands
+# back a real path, which is what keeps the resume checks below — `_usable`,
+# and re-rendering only the variants that are actually missing — working
+# unchanged against the same files on disk.
+def _master_path(track_id, store=None):
+    store = store or storage.get_store()
+    return store.local_path(storage.master_key(track_id))
 
 
-def _variant_path(track_id, grid_bpm):
-    return config.VARIANT_DIR / f"{track_id}_{grid_bpm}.wav"
+def _variant_path(track_id, grid_bpm, store=None):
+    store = store or storage.get_store()
+    return store.local_path(storage.variant_key(track_id, grid_bpm))
 
 
 def _usable(path):
+    if path is None:
+        return False              # remote store: nothing local to resume from
     path = Path(path)
     return path.exists() and path.stat().st_size > 44      # bigger than a WAV header
 
@@ -60,10 +71,10 @@ def ingest_track(database, entry, mode, timer=None, force=False):
         # ---------------------------------------------------- fetch (network)
         have_master = (not force and existing is not None
                        and status.at_least(existing.status, status.FETCHED)
-                       and _usable(existing.audio_path or _master_path(tid)))
+                       and _usable(_master_path(tid)))
         if have_master:
             with timer.stage("reuse_master", tid):
-                samples, sr = load_wav(existing.audio_path or _master_path(tid))
+                samples, sr = load_wav(_master_path(tid))
             meta = {"id": tid, "name": existing.name, "artist": existing.artist,
                     "genre": existing.genre, "license": existing.license,
                     "audiodownload_allowed": True,
@@ -76,11 +87,11 @@ def ingest_track(database, entry, mode, timer=None, force=False):
             # Unknown licenses raise here, before anything is persisted (P1-07).
             lic = licensing.parse_license(meta["license"])
             with timer.stage("persist_master", tid):
-                audio_path = jamendo.persist_master(meta, samples, sr)
+                audio_key = jamendo.persist_master(meta, samples, sr)
             catalog.save_ingested_track({
                 **meta, **lic,
                 "mixable": not lic["nd"],
-                "audio_path": str(audio_path),
+                "audio_key": audio_key,
                 "duration_s": len(samples) / sr,
                 "status": status.FETCHED,
             })
@@ -106,7 +117,7 @@ def ingest_track(database, entry, mode, timer=None, force=False):
                 "native_bpm": a["bpm"],
                 "camelot": a["key"]["camelot"],
                 "duration_s": a["duration_s"],
-                "audio_path": str(_master_path(tid)),
+                "audio_key": storage.master_key(tid),
                 "analysis": a,
                 "segments": segs,
                 "status": status.ANALYZED,
@@ -123,7 +134,8 @@ def ingest_track(database, entry, mode, timer=None, force=False):
                 if not force and _usable(vpath):
                     # Already on disk from an interrupted run: re-register it
                     # rather than paying for the stretch again.
-                    variants.append((g, g / a["bpm"], str(vpath), wav_duration(vpath)))
+                    variants.append((g, g / a["bpm"], storage.variant_key(tid, g),
+                                     wav_duration(vpath)))
                 else:
                     to_render.append(g)
             if to_render:
@@ -133,7 +145,8 @@ def ingest_track(database, entry, mode, timer=None, force=False):
                         out = stretch.stretch(samples, sr, ratio)
                         vpath = _variant_path(tid, g)
                         save_wav(vpath, out, sr)
-                        variants.append((g, ratio, str(vpath), len(out) / sr))
+                        variants.append((g, ratio, storage.variant_key(tid, g),
+                                         len(out) / sr))
                         rendered += 1
             variants.sort()
             if len(variants) > rendered:
@@ -147,7 +160,7 @@ def ingest_track(database, entry, mode, timer=None, force=False):
             "native_bpm": a["bpm"],
             "camelot": a["key"]["camelot"],
             "duration_s": a["duration_s"],
-            "audio_path": str(_master_path(tid)),
+            "audio_key": storage.master_key(tid),
             "analysis": a,
             "segments": segs,
             "status": status.READY,

@@ -119,6 +119,22 @@ class Engine:
     def _existing_columns(self, cur, table):
         raise NotImplementedError
 
+    def table_columns(self, table):
+        """Column names of a live table, in positional order.
+
+        `SELECT * LIMIT 0` rather than PRAGMA or information_schema: it needs
+        no dialect-specific SQL and returns the columns in the same order the
+        row tuples will arrive in, which is the order that actually matters
+        (see `verify_schema`).
+        """
+        with self.connection() as conn:
+            cur = conn.cursor()
+            try:
+                cur.execute(f"SELECT * FROM {table} LIMIT 0")   # noqa: S608
+                return [d[0] for d in cur.description]
+            finally:
+                cur.close()
+
     @property
     def in_transaction(self):
         return self._scope.depth > 0

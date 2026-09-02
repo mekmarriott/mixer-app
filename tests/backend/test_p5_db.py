@@ -240,7 +240,7 @@ class TestScopes(unittest.TestCase):
         row = {"id": "t1", "name": "N", "artist": "A", "genre": "house",
                "license": "CC BY 4.0", "nd": False, "sa": False, "nc": False,
                "mixable": True, "native_bpm": 124.0, "camelot": "8A",
-               "duration_s": 60.0, "audio_path": "/x.wav",
+               "duration_s": 60.0, "audio_key": "/x.wav",
                "analysis": {"bpm": 124.0}, "segments": [{"label": "intro"}]}
         self.database.catalog.save_ingested_track(
             row, [(124, 1.0, "/v124.wav", 60.0), (125, 1.008, "/v125.wav", 59.5)])
@@ -257,7 +257,7 @@ class TestScopes(unittest.TestCase):
         row = {"id": "t2", "name": "N", "artist": "A", "genre": "house",
                "license": "CC BY 4.0", "nd": False, "sa": False, "nc": False,
                "mixable": True, "native_bpm": 124.0, "camelot": "8A",
-               "duration_s": 60.0, "audio_path": "/x.wav",
+               "duration_s": 60.0, "audio_key": "/x.wav",
                "analysis": None, "segments": None}
         self.database.catalog.save_ingested_track(row, [(124, 1.0, "/v.wav", 60.0)])
         self.database.catalog.save_ingested_track(dict(row, name="Renamed"))
@@ -348,7 +348,7 @@ class TestConcurrency(unittest.TestCase):
         base = {"name": "N", "artist": "A", "genre": "house",
                 "license": "CC BY 4.0", "nd": False, "sa": False, "nc": False,
                 "mixable": True, "native_bpm": 124.0, "camelot": "8A",
-                "duration_s": 60.0, "audio_path": "/x.wav",
+                "duration_s": 60.0, "audio_key": "/x.wav",
                 "analysis": None, "segments": None}
 
         def upsert(i):

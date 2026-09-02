@@ -28,7 +28,7 @@ class Track:
     native_bpm: float
     camelot: str
     duration_s: float
-    audio_path: str
+    audio_key: str
     analysis_json: Any
     segments_json: Any
     status: str
@@ -42,7 +42,7 @@ class Track:
         ("id", "TEXT"), ("name", "TEXT"), ("artist", "TEXT"), ("genre", "TEXT"),
         ("license", "TEXT"), ("license_nd", "BOOLEAN"), ("license_sa", "BOOLEAN"),
         ("license_nc", "BOOLEAN"), ("mixable", "BOOLEAN"), ("native_bpm", "REAL"),
-        ("camelot", "TEXT"), ("duration_s", "REAL"), ("audio_path", "TEXT"),
+        ("camelot", "TEXT"), ("duration_s", "REAL"), ("audio_key", "TEXT"),
         ("analysis_json", "JSONDOC"), ("segments_json", "JSONDOC"), ("status", "TEXT"),
         ("status_error", "TEXT"), ("source_url", "TEXT"), ("fetched_at", "REAL"),
         ("analyzed_at", "REAL"), ("ready_at", "REAL"),
@@ -61,12 +61,12 @@ class Variant:
     track_id: str
     grid_bpm: int
     ratio: float
-    path: str
+    object_key: str
     duration_s: float
 
     _FIELDS = (
         ("track_id", "TEXT"), ("grid_bpm", "INTEGER"), ("ratio", "REAL"),
-        ("path", "TEXT"), ("duration_s", "REAL"),
+        ("object_key", "TEXT"), ("duration_s", "REAL"),
     )
 
     @classmethod

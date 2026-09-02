@@ -18,7 +18,7 @@ import time
 
 import numpy as np
 
-from . import config, licensing, synth
+from . import config, ratelimit, storage, licensing, synth
 from .audio_io import pcm16_to_float, save_wav
 
 JAMENDO_API = "https://api.jamendo.com/v3.0"
@@ -129,18 +129,24 @@ def require_client_id():
     return client_id
 
 
-def download_audio(url, retries=DOWNLOAD_RETRIES, sleep=time.sleep):
+def download_audio(url, retries=DOWNLOAD_RETRIES, sleep=time.sleep, limiter=None):
     """Fetch a track's audio bytes, retrying transient transport failures.
 
     Separate from the metadata retry above: this talks to the storage host, so
     the failures worth retrying are connection errors, 5xx/429, and empty
-    bodies rather than Jamendo's empty-success envelope."""
+    bodies rather than Jamendo's empty-success envelope.
+
+    `limiter` paces requests when a batch run is downloading many tracks at
+    once. It is optional because the interactive path fetches one track and has
+    nothing to pace against."""
     import requests
 
     last = "no attempts made"
     for attempt in range(retries):
         if attempt:
             sleep(RETRY_BASE_DELAY_S * (2 ** (attempt - 1)))
+        if limiter is not None:
+            limiter.acquire()
         try:
             r = requests.get(url, timeout=DOWNLOAD_TIMEOUT_S)
         except requests.RequestException as exc:
@@ -223,7 +229,165 @@ def _license_from_ccurl(url):
     return name
 
 
-def persist_master(meta, samples, sr):
-    path = config.AUDIO_DIR / f"{meta['id']}.wav"
-    save_wav(path, samples, sr)
-    return path
+def persist_master(meta, samples, sr, store=None):
+    """Write the master through the blob store and return its object key.
+
+    A JSON sidecar of the source metadata goes alongside it. That is what lets
+    a later run reuse this master without touching the API at all: without it,
+    rebuilding a wiped catalog would re-spend monthly quota re-learning
+    metadata whose audio is already on disk (see publish.fetch_masters).
+    """
+    import json
+
+    store = store or storage.get_store()
+    key = storage.master_key(meta["id"])
+    store.put_bytes(storage.meta_key(meta["id"]),
+                    json.dumps(meta, indent=2).encode(), "application/json")
+    dst = store.local_path(key)
+    if dst is not None:                       # local backend: write in place
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        save_wav(dst, samples, sr)
+        return key
+    import tempfile                           # remote backend: stage then upload
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+        tmp = f.name
+    try:
+        save_wav(tmp, samples, sr)
+        return store.put_file(key, tmp, "audio/wav")
+    finally:
+        os.unlink(tmp)
+
+
+# --------------------------------------------------------------------------
+# Batched metadata — the batch-publisher path
+# --------------------------------------------------------------------------
+#
+# `fetch_track_metadata` above answers one id per request, which is right for
+# the interactive flow and ruinous for a catalog: 10,000 tracks would be 10,000
+# requests against a monthly quota. Everything below asks for up to 200 ids at
+# a time while preserving the same rules — retry an empty success, never retry
+# a real API error.
+
+#: Documented maximum for the `limit` parameter on /tracks.
+MAX_IDS_PER_REQUEST = 200
+
+#: Deliberately conservative. 2.0 req/s is the highest rate observed to run
+#: clean against the live API (30 serial calls, zero 429s) — a floor on the
+#: real ceiling, not the ceiling. The API publishes no rate-limit headers of
+#: any kind, so there is no telemetry to discover the true limit from.
+DEFAULT_API_RATE = 2.0          # requests/sec against api.jamendo.com
+DEFAULT_DOWNLOAD_RATE = 2.0     # file fetches/sec against the storage host
+
+
+class RateLimited(TrackSourceError):
+    """The server signalled 429 and the retries were exhausted."""
+
+
+class IncompleteBatch(TrackSourceError):
+    """A batch came back short after exhausting the empty-success retries."""
+
+
+def estimate_api_requests(n_tracks):
+    """Requests needed to fetch metadata for `n_tracks`. Used by publish.py to
+    report cost against the monthly quota before spending any of it."""
+    return -(-int(n_tracks) // MAX_IDS_PER_REQUEST)     # ceil division
+
+
+def _batch_get_json(url, params, timeout=30, limiter=None, budget=None):
+    """A paced, budgeted GET returning parsed JSON.
+
+    The budget is spent *before* the request, so an exhausted budget raises
+    without touching the network. A monthly quota is consumed by retry loops,
+    not by bursts, which is why the ceiling is checked per attempt.
+    """
+    import requests
+
+    if budget is not None:
+        budget.spend(1)
+    if limiter is not None:
+        limiter.acquire()
+    r = requests.get(url, params=params, timeout=timeout)
+    if r.status_code == 429:
+        raise RateLimited(f"429 from {url}")
+    r.raise_for_status()
+    return r.json()
+
+
+def fetch_metadata(track_ids, genre_by_id=None, limiter=None, budget=None,
+                   client_id=None, get=None, sleep=time.sleep):
+    """Metadata for many track ids in as few API requests as possible."""
+    ids = [str(t) for t in track_ids]
+    if not ids:
+        return {}
+    client_id = client_id or require_client_id()
+    genre_by_id = genre_by_id or {}
+    limiter = limiter or ratelimit.TokenBucket(DEFAULT_API_RATE)
+    get = get or _batch_get_json
+
+    out = {}
+    for start in range(0, len(ids), MAX_IDS_PER_REQUEST):
+        chunk = ids[start:start + MAX_IDS_PER_REQUEST]
+        for t in _fetch_batch(chunk, client_id, get, limiter, budget, sleep):
+            tid = str(t["id"])
+            out[tid] = _meta_from_api(t, genre_by_id.get(tid, "house"))
+    return out
+
+
+def _fetch_batch(chunk, client_id, get, limiter, budget, sleep,
+                 attempts=EMPTY_RESULT_RETRIES + 1):
+    """One id-batch, retried until the API returns a complete result set.
+
+    Same three-way outcome as `fetch_track_metadata`, applied to a batch: an
+    error envelope fails immediately, a short result set is transient and
+    retried, a complete set is returned. The distinction matters more here —
+    retrying a bad client id 5 times per batch across 50 batches would spend
+    250 requests of a monthly quota to learn nothing.
+
+    A short batch is never evidence that tracks were delisted. The loss was
+    measured as all-or-nothing (a 12-id batch returned 12/12 or 0/12 across ten
+    runs, never 9), so accepting one would silently drop tracks from an import
+    that then reports success.
+    """
+    got = []
+    for attempt in range(attempts):
+        payload = get(f"{JAMENDO_API}/tracks", {
+            # Multiple ids must reach the wire as `id=a+b+c`. Repeating the
+            # `id=` parameter does NOT batch — the API keeps the last one and
+            # returns a single result. requests urlencodes a space to `+`, so
+            # joining on a space produces the required form; joining on a
+            # literal "+" would be escaped to %2B and silently break batching.
+            "client_id": client_id,
+            "id": " ".join(chunk),
+            "format": "json",
+            "audioformat": "mp32",
+            "limit": MAX_IDS_PER_REQUEST,
+            "include": "licenses musicinfo stats",
+        }, limiter=limiter, budget=budget)
+        headers = payload.get("headers") or {}
+        code = headers.get("code", 0)
+        if code:
+            raise TrackSourceError(
+                "Jamendo API error %s for a batch of %d track(s): %s"
+                % (code, len(chunk), headers.get("error_message") or "no message"))
+        got = payload.get("results") or []
+        if len(got) >= len(chunk):
+            return got
+        if attempt < attempts - 1:
+            sleep(RETRY_BASE_DELAY_S * (2 ** attempt))
+    raise IncompleteBatch(
+        "Jamendo returned %d/%d tracks on all %d attempts. This is not proof "
+        "the missing ones are gone: the API answers valid queries with an "
+        "empty HTTP 200 intermittently. Re-run before treating them as "
+        "missing." % (len(got), len(chunk), attempts))
+
+
+def _meta_from_api(t, genre):
+    return {
+        "id": str(t["id"]),
+        "name": t["name"],
+        "artist": t["artist_name"],
+        "genre": genre,
+        "license": _license_from_ccurl(t.get("license_ccurl", "")),
+        "audiodownload_allowed": bool(t.get("audiodownload_allowed", False)),
+        "audiodownload": t.get("audiodownload", ""),
+    }

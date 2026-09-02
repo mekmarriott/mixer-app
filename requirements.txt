@@ -1,26 +1,33 @@
-# Backend runtime dependencies.
+# Serving dependencies — what Vercel installs for the API function.
 #
 #   python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 #
-# Also needed on PATH (not installable from PyPI):
-#   ffmpeg      -> backend/jamendo.py   decodes Jamendo MP3s   (brew install ffmpeg)
-#   rubberband  -> backend/stretch.py   time-stretch, R3 engine (brew install rubberband)
+# This is the SERVING subset. It deliberately excludes scipy, requests and
+# essentia: none is reachable from the request path, because analysis,
+# segmentation and time-stretch are ingest-time only and run locally
+# (docs/infrastructure-plan.md §5.3). The modules holding them import them
+# lazily, so nothing drags them back in.
+#
+# Measured: with scipy the dependency set is ~158 MB installed, against
+# Vercel's 250 MB uncompressed function limit. Without it, ~53 MB. That
+# headroom is the difference between deploying and not.
+#
+# Excluding essentia here has a second, non-size reason: it is AGPL-3.0, whose
+# copyleft is triggered by *network* use. Keeping it off the network-facing
+# server — it runs only during local ingestion — is what stops that clause
+# firing at all. See docs/requirements.md §4.
+#
+# RUNNING THE APP LOCALLY OR THE TEST SUITE NEEDS MORE THAN THIS.
+# Use requirements-ingest.txt, which includes this file.
 
 Flask==3.1.0
 numpy==2.2.1
-scipy==1.15.0
-requests==2.32.3        # jamendo mode only (config/tracks.json "mode": "jamendo")
 
-# Production analysis engine (BPM / beat grid / key / frame features).
-#
-# AGPL-3.0 — installing it is a licensing decision as well as a setup step; see
-# docs/requirements.md §3. It is pinned rather than left floating because the
-# fallback is silent: 2.1b6.dev1389 is the newest release publishing macOS
-# arm64 + Linux x86_64 wheels for CPython 3.9-3.13, while the newer
-# 2.1b6.dev1438 ships cp314 wheels only, so an unpinned install quietly drops
-# to the numpy/scipy engine on every other interpreter and changes every
-# detected BPM and key. Set DJMIXER_REQUIRE_ESSENTIA=1 to make that loud.
-#
-# rubberband is a CLI, not a package, so it cannot be pinned here — the
-# equivalent guard is DJMIXER_REQUIRE_RUBBERBAND=1.
-essentia==2.1b6.dev1389
+# Postgres driver for the Supabase deployment target. Unlike local development
+# — which runs on stdlib sqlite3 and needs neither of these — the deployed
+# function always talks to Postgres, so both belong in the serving manifest.
+# engine.py uses psycopg_pool.ConnectionPool, so psycopg alone is not enough.
+# requirements-postgres.txt installs the same pair into a local SQLite dev
+# environment; keep the pins here and there in step.
+psycopg[binary]==3.2.3
+psycopg-pool==3.2.4

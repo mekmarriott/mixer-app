@@ -12,14 +12,40 @@
 set -e
 cd "$(dirname "$0")"
 
-PY=".venv/bin/python"
-if [ ! -x "$PY" ]; then
-  echo "No .venv found. Create it first:" >&2
-  echo "  python3 -m venv .venv && .venv/bin/pip install -r requirements.txt" >&2
+# Find an interpreter that actually has the deps. Checking for importability
+# rather than just for .venv/ matters in two cases: a bare `python3` is often
+# the system one (3.9 on macOS) with no site-packages, which fails at import
+# and looks like a broken suite; and sibling worktrees have no .venv of their
+# own but can use the main checkout's. Override with PYTHON=/path/to/python.
+find_python() {
+  local candidates=() common
+  [ -n "$PYTHON" ] && candidates+=("$PYTHON")
+  candidates+=("$PWD/.venv/bin/python")
+  common="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+  [ -n "$common" ] && candidates+=("$(dirname "$common")/.venv/bin/python")
+  candidates+=("$(command -v python3 || true)")
+
+  for c in "${candidates[@]}"; do
+    if [ -n "$c" ] && [ -x "$c" ] && "$c" -c "import numpy, flask" >/dev/null 2>&1; then
+      printf '%s\n' "$c"
+      return 0
+    fi
+  done
+  return 1
+}
+
+if ! PY="$(find_python)"; then
+  cat >&2 <<'EOF'
+No Python with numpy+flask found. Create one:
+  python3 -m venv .venv && .venv/bin/pip install -r requirements-ingest.txt
+(requirements.txt alone is the serving subset and omits scipy — the suite
+needs the ingest extras.) Or set PYTHON=/path/to/python.
+EOF
   exit 1
 fi
-PY="$(pwd)/$PY"
+echo "Using $PY ($("$PY" -c 'import sys; print(sys.version.split()[0])'))"
 
+echo
 echo "== Backend suite (unittest) =="
 (cd tests/backend && "$PY" -m unittest discover -s . -v)
 

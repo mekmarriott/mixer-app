@@ -23,6 +23,7 @@ import contextlib
 import time
 
 from . import engine as engine_mod
+from . import models
 from . import status as status_mod
 from .engine import DatabaseError                              # noqa: F401
 from .models import (Latency, LatencySummaryRow,               # noqa: F401
@@ -52,7 +53,62 @@ class Database:
 
     def migrate(self):
         self.engine.migrate()
+        self.verify_schema()
         return self
+
+    def verify_schema(self):
+        """Fail loudly when a live table's columns disagree with the models.
+
+        `migrate()` only ever *creates* — every statement in schema.sql is
+        IF NOT EXISTS — so against a database built by an older version it is a
+        silent no-op and the old column layout survives. That would be merely
+        annoying if it produced an error, but `_from_row` maps rows to
+        dataclasses **positionally**, so a renamed column silently hands the
+        old column's value to the new field. Nothing raises at any layer: the
+        API answers 200, and the only symptom is wrong data at the far end.
+
+        Measured on exactly that case (audio_path -> audio_key): /api/health,
+        /api/tracks, /api/tracks/<id> all returned 200 and the audio endpoint
+        returned a 302 to a nonsense URL built from a stale filesystem path.
+
+        The three schema drifts are not equally dangerous, which is why only
+        this one needed a guard:
+
+          * a **renamed** column keeps the arity and shifts the values —
+            silent, wrong, and undetectable from above;
+          * a **removed** column shortens the row — IndexError, loud;
+          * an **added** column is ignored, because the decode enumerates
+            ``_FIELDS`` rather than the row.
+
+        Only `tracks` and `variants` are checked, and the set is deliberately
+        "models consumed by a ``SELECT *``" rather than "all models". Queries
+        with an explicit select list (ListTrackSummaries, LatencySummary) take
+        their column order from the SQL, so positional decoding cannot drift
+        for them. `latency` in particular must NOT be added here: nothing does
+        ``SELECT * FROM latency``, and a database created before the DB
+        refactor has no `id` column on it, so checking it would fail a
+        perfectly working install.
+
+        This check does not migrate anything — there is no migration runner yet
+        (docs/infrastructure-plan.md §11.1). It converts a silent wrong answer
+        into an actionable startup error, which is the difference between
+        deleting a cache directory and debugging the far end for an afternoon.
+        """
+        # No try/except around table_columns: migrate() has already run and
+        # creates both tables, so a failure reading them is a real connection
+        # or permission problem and should surface rather than be skipped.
+        for table, model in (("tracks", models.Track), ("variants", models.Variant)):
+            expected = [name for name, _ in model._FIELDS]
+            actual = self.engine.table_columns(table)
+            if actual != expected:
+                raise DatabaseError(
+                    f"schema mismatch on {table!r}: database has {actual}, "
+                    f"code expects {expected}. migrate() only creates tables, "
+                    f"it cannot alter them, and rows are mapped positionally — "
+                    f"so continuing would silently return wrong values rather "
+                    f"than fail. Delete the local data directory to rebuild "
+                    f"(data/ and data-e2e/ are caches), or apply an "
+                    f"ALTER TABLE against a database whose contents matter.")
 
     def dispose(self):
         self.engine.dispose()
@@ -95,7 +151,7 @@ class Catalog:
         """Persist an ingested track and its rendered variants atomically.
 
         `row` is the dict the ingestion pipeline assembles; `variants` is an
-        iterable of ``(grid_bpm, ratio, path, duration_s)``. One transaction, so
+        iterable of ``(grid_bpm, ratio, object_key, duration_s)``. One transaction, so
         a crash mid-render never leaves a track advertising variants that were
         not recorded.
 
@@ -110,7 +166,7 @@ class Catalog:
                 license_nd=row["nd"], license_sa=row["sa"], license_nc=row["nc"],
                 mixable=row["mixable"], native_bpm=row.get("native_bpm"),
                 camelot=row.get("camelot"), duration_s=row.get("duration_s"),
-                audio_path=row.get("audio_path"),
+                audio_key=row.get("audio_key"),
                 analysis_json=row.get("analysis"),
                 segments_json=row.get("segments"),
                 status=row.get("status", status_mod.PENDING),
@@ -119,9 +175,10 @@ class Catalog:
                 fetched_at=row.get("fetched_at"),
                 analyzed_at=row.get("analyzed_at"),
                 ready_at=row.get("ready_at"))
-            for grid_bpm, ratio, path, duration_s in variants:
+            for grid_bpm, ratio, object_key, duration_s in variants:
                 q.upsert_variant(track_id=row["id"], grid_bpm=grid_bpm,
-                                 ratio=ratio, path=path, duration_s=duration_s)
+                                 ratio=ratio, object_key=object_key,
+                                 duration_s=duration_s)
 
     def advance_status(self, track_id, new_status, at=None):
         """Move a track's high-water mark forward and clear any stale error.
