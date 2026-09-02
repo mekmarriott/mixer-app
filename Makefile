@@ -74,6 +74,7 @@ FIXTURE_PORT ?= 5051
 FIXTURE_DIR  ?= $(ROOT)/data-fixture
 
 .PHONY: help test test-fast test-pg test-smoke test-browser check serve ingest ingest-dry env \
+        push-metadata push-metadata-dry reconcile reconcile-apply discover \
         db-up db-down db-reset db-shell db-url wait-pg up down status \
         clean-pg clean-variants clean-audio clean-all deps
 
@@ -98,7 +99,12 @@ help:
 	@echo
 	@echo "Catalog"
 	@echo "  make ingest-dry      show the plan and API cost. Spends nothing."
+	@echo "  make discover        build a catalog from a Jamendo community listing"
 	@echo "  make ingest          batch-publish the catalog (parallel, resumable)"
+	@echo "  make push-metadata-dry  check the remote connection and schema"
+	@echo "  make push-metadata      push tracks + variants to the remote DB"
+	@echo "  make reconcile          audit catalog vs blob store (read-only)"
+	@echo "  make reconcile-apply    re-upload objects that are absent or stale"
 	@echo
 	@echo "Teardown (tiered by what it costs to undo)"
 	@echo "  make clean-pg        drop the PostgreSQL cluster    [free to rebuild]"
@@ -306,6 +312,69 @@ ingest-dry: deps
 
 ingest: deps
 	@"$(PY)" -m backend.publish $(PUBLISH_ARGS)
+
+# Push the catalog's METADATA (tracks + variants) to the remote database —
+# Supabase in deployment. Audio objects are not touched: they reach the store
+# through the publisher, and these rows only name them.
+#
+# SOURCE defaults to the SQLite catalog rather than to $(PG_URL), because that
+# is where a local ingest run actually accumulates. The local PostgreSQL is a
+# development and test database and picks up synthetic fixture tracks (ids
+# 1001, 2001, 9999 ...) from the suites, which must not reach production.
+# Override it deliberately if you mean something else.
+#
+#   make push-metadata-dry     connect, verify the schema, write nothing
+#   make push-metadata         upsert the rows
+#   make push-metadata SOURCE="$(PG_URL)"
+SOURCE ?= sqlite:///$(DATA_DIR)/catalog.sqlite3
+
+push-metadata-dry: deps
+	@"$(PY)" -m backend.db.sync --from "$(SOURCE)" --dry-run $(SYNC_ARGS)
+
+push-metadata: deps
+	@"$(PY)" -m backend.db.sync --from "$(SOURCE)" $(SYNC_ARGS)
+
+# Build a catalog file from a Jamendo community listing, rather than curating
+# one by hand. COUNT is how many *ingestible* tracks to collect: ND-licensed
+# and non-downloadable tracks are filtered out during discovery, so asking for
+# 200 yields 200 tracks that will actually render variants, not 200 rows of
+# which half are refused at the licence gate.
+#
+#   make discover COUNT=200 TAG=electronic OUT=config/tracks.electronic.json
+#   make discover COUNT=1000 OUT=config/tracks.all.json        # all genres
+#
+# Then ingest it:  DJMIXER_TRACKS=<OUT> make ingest
+COUNT ?= 200
+TAG   ?=
+OUT   ?= config/tracks.discovered.json
+
+discover: deps
+	@"$(PY)" -m backend.discover --count $(COUNT) --out "$(OUT)" \
+	  $(if $(TAG),--tag $(TAG),) $(DISCOVER_ARGS)
+
+# Audit the catalog against the blob store, and make the store match it.
+#
+# Metadata and objects can disagree in three ways, and only the first is
+# caught by ingestion's own resume check: a row naming an object that is not
+# there, a row naming an object that IS there but is a different render, and
+# an object no row names. The second is the dangerous one — every key
+# resolves, every duration is wrong, and mixes land off the beat.
+#
+# Both targets need the environment pointed at the deployment: the remote
+# DJMIXER_DATABASE_URL and BLOB_BACKEND=vercel (plus BLOB_BASE_URL). Add
+# RECONCILE_ARGS='--cli "npx --yes vercel@latest"' when the Vercel CLI is not
+# installed globally.
+#
+#   make reconcile            report only, writes nothing
+#   make reconcile-apply      re-upload what is absent or stale
+#   make reconcile-apply RECONCILE_ARGS=--delete-orphans
+RECONCILE_ARGS ?=
+
+reconcile: deps
+	@"$(PY)" -m backend.reconcile $(RECONCILE_ARGS)
+
+reconcile-apply: deps
+	@"$(PY)" -m backend.reconcile --apply $(RECONCILE_ARGS)
 
 # ---------------------------------------------------------------------------
 # Teardown
