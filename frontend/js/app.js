@@ -260,6 +260,12 @@ function renderAttributions() {
 // deck browses by genre rather than pretending to rank. No pair analysis runs
 // until track 1 is chosen.
 async function renderDeckZeroState() {
+  // The zero state is a browse surface, not a ranking: it shows a fixed few
+  // per genre and there is no "next page" behind it. Clearing the paging
+  // state stops the scroll handler, which is bound to the window and cannot
+  // tell which deck is on screen, from appending recommendation rows for
+  // whichever track was last selected onto the bottom of it.
+  deckPaging = { forTrackId: null, offset: 0, exhausted: true, loading: false };
   const { groups, per_genre } = await api.deck();
   $("#deck-sub").textContent =
     `Browse by genre \u2014 top ${per_genre} per genre; pick your opener`;
@@ -369,7 +375,9 @@ window.addEventListener("scroll", () => {
   const nearBottom =
     window.innerHeight + window.scrollY >= document.body.offsetHeight - 400;
   if (!nearBottom) return;
-  const list = $("#deck").querySelector(".deck-list");
+  // Only the suggestion deck is a paged list; the zero state renders genre
+  // sections instead, and appending to one would mix two kinds of row.
+  const list = $("#deck").querySelector(":scope > .deck-list");
   if (list) loadDeckPage(deckPaging.forTrackId, list);
 }, { passive: true });
 
