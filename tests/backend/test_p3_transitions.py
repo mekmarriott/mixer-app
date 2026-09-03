@@ -156,3 +156,36 @@ class TestFadeLength(unittest.TestCase):
         cand = {"components": {"spectral": 1.0, "energy": 1.0, "phase": 1.0}}
         none = transitions.fade_for(cand, 120, room_s=0.0)
         self.assertEqual(none["fade_bars"], config.FADE_BARS_LADDER[0])
+
+
+class TestScoringTermsDiscriminate(unittest.TestCase):
+    """A term that cannot vary cannot choose, whatever weight it carries."""
+
+    def test_harmonic_separates_agreement_from_disagreement(self):
+        """Chroma is compared by SHAPE, not angle.
+
+        These vectors are non-negative, sum-normalised and log-compressed, so
+        every one is near uniform and the cosine between any two is close to 1
+        — measured across 5124 real windows it ran 0.961..0.999. Centring
+        first leaves the pattern, which is the part that says which pitch
+        classes dominate.
+        """
+        same = [0.30, 0.05, 0.02, 0.20, 0.03, 0.10, 0.02, 0.18, 0.02, 0.04, 0.02, 0.02]
+        # The same energy, moved onto different pitch classes.
+        other = [0.02, 0.30, 0.20, 0.02, 0.18, 0.02, 0.10, 0.02, 0.05, 0.03, 0.04, 0.02]
+        agree = matching_similarity(same, same)
+        disagree = matching_similarity(same, other)
+        self.assertAlmostEqual(agree, 1.0, places=6)
+        self.assertLess(disagree, 0.5)
+        self.assertGreater(agree - disagree, 0.5,
+                           "harmonic term must separate these by a wide margin")
+
+    def test_a_flat_window_scores_nothing_rather_than_everything(self):
+        flat = [1 / 12] * 12
+        peaky = [0.5] + [0.5 / 11] * 11
+        self.assertIsNone(matching_similarity(flat, peaky))
+
+
+def matching_similarity(a, b):
+    from backend.analysis import chroma_similarity
+    return chroma_similarity(a, b)

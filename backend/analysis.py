@@ -381,20 +381,39 @@ def window_chroma(prefix, block_frames, start_frame, end_frame):
 
 
 def chroma_similarity(a, b):
-    """Cosine similarity of two chroma vectors, on 0..1.
+    """How alike two chroma vectors are in SHAPE, on 0..1.
 
-    Both are non-negative and normalised, so the cosine already lands in that
-    range: 1 when the same pitch classes dominate both windows, falling as the
-    energy sits in classes the other does not share.
+    Correlation, not cosine. These vectors are non-negative, sum-normalised
+    and log-compressed, so every one of them is close to uniform and the angle
+    between any two is small: measured as cosine across 5124 real candidate
+    windows this ran 0.961 to 0.999, a standard deviation of 0.006. A term
+    that never varies cannot choose between candidates however much weight it
+    carries — it just adds a constant to every score.
+
+    Centring first removes the flat component they all share and leaves the
+    pattern, which is the part that says which pitch classes actually
+    dominate. detect_key compares chroma against its key profiles the same
+    way, and for the same reason.
+
+    Mapped from correlation's -1..1 onto 0..1, so anti-correlated content —
+    the two windows emphasising different pitch classes — scores near zero
+    rather than merely below average.
     """
     if not a or not b:
         return None
-    dot = sum(x * y for x, y in zip(a, b))
-    na = sum(x * x for x in a) ** 0.5
-    nb = sum(y * y for y in b) ** 0.5
-    if na <= 0 or nb <= 0:
+    n = len(a)
+    if n != len(b) or n == 0:
         return None
-    return max(0.0, min(1.0, dot / (na * nb)))
+    ma, mb = sum(a) / n, sum(b) / n
+    da = [x - ma for x in a]
+    db = [y - mb for y in b]
+    num = sum(x * y for x, y in zip(da, db))
+    na = sum(x * x for x in da) ** 0.5
+    nb = sum(y * y for y in db) ** 0.5
+    if na <= 0 or nb <= 0:
+        return None                     # a flat window says nothing either way
+    r = num / (na * nb)
+    return max(0.0, min(1.0, (r + 1.0) / 2.0))
 
 
 def window_mean(prefix, start, end):

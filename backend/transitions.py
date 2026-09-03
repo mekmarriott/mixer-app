@@ -19,13 +19,28 @@ from .segmentation import ENTRY_ROLES, EXIT_ROLES
 # and no idea whether the two windows were in tune. Two tracks in compatible
 # keys can still clash over any particular pair of windows, and that clash is
 # what a listener notices first.
-W_HARMONIC, W_ENERGY, W_PHASE, W_SPECTRAL, W_ROLE = 0.35, 0.20, 0.20, 0.15, 0.10
+# Weighted by what each term can actually separate, measured over 5124 real
+# candidate windows for one pair:
+#
+#     term       sd      range
+#     energy     0.135   0.72
+#     role       0.136   0.67
+#     harmonic   0.035   0.20     (0.083 / 0.54 on a less alike pair)
+#     spectral   0.032   0.16
+#     phase      0.003   0.014
+#
+# Phase is near-constant BY CONSTRUCTION — candidate windows start on
+# downbeats, so they are all aligned and it has nothing left to say. Weight on
+# a term that cannot vary is weight that cannot choose: it adds the same
+# number to every candidate. It keeps a token share only to break ties between
+# otherwise equal windows.
+W_HARMONIC, W_ENERGY, W_ROLE, W_SPECTRAL, W_PHASE = 0.40, 0.20, 0.20, 0.15, 0.05
 
 # Grading a transition's LENGTH is a different question from grading its
 # placement, so it uses its own weights over the same components. How well two
 # windows blend decides how long they can be held together: a clean blend
 # sustains a long fade, a rough one has to be got over with.
-F_HARMONIC, F_SPECTRAL, F_ENERGY, F_PHASE = 0.40, 0.25, 0.20, 0.15
+F_HARMONIC, F_SPECTRAL, F_ENERGY, F_PHASE = 0.45, 0.25, 0.25, 0.05
 
 # Sections a track can be entered over — sparse enough to lay another track
 # across. The contiguous run of them at B's entry is the room a fade has.
